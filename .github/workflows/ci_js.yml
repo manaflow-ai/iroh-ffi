@@ -38,10 +38,10 @@ jobs:
     timeout-minutes: 30
     runs-on: [self-hosted, macOS, ARM64]
     steps:
-      - uses: actions/checkout@master
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: davidB/rust-cargo-make@v1
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
       - name: Enable corepack (yarn)
@@ -133,9 +133,9 @@ jobs:
       run:
         working-directory: ./iroh-js
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         if: ${{ !matrix.settings.docker }}
         with:
           node-version: 24
@@ -175,7 +175,7 @@ jobs:
       - name: Install dependencies
         run: yarn install
       - name: Setup node x86
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         if: matrix.settings.target == 'i686-pc-windows-msvc'
         with:
           node-version: 24
@@ -219,9 +219,9 @@ jobs:
       run:
         working-directory: ./iroh-js
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node }}
           architecture: x64
@@ -255,9 +255,9 @@ jobs:
       run:
         working-directory: ./iroh-js
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node }}
       - name: Enable corepack (yarn)
@@ -295,9 +295,9 @@ jobs:
       run:
         working-directory: ./iroh-js
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node }}
       - name: Enable corepack (yarn)
@@ -333,9 +333,9 @@ jobs:
       run:
         working-directory: ./iroh-js
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node }}
       - name: Enable corepack (yarn)
@@ -385,9 +385,9 @@ jobs:
       run:
         working-directory: ./iroh-js
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node }}
       - name: Enable corepack (yarn)
@@ -437,9 +437,9 @@ jobs:
       run:
         working-directory: ./iroh-js
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node }}
       - name: Enable corepack (yarn)
@@ -485,7 +485,7 @@ jobs:
       - test-linux-aarch64-musl-binding
       - test-linux-arm-gnueabihf-binding
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Setup node
         # Per npm's official Trusted Publishing docs
         # (https://docs.npmjs.com/trusted-publishers): node 24 + setup-node@v6
