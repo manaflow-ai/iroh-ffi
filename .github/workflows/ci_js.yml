@@ -34,6 +34,7 @@ jobs:
   # (`cargo make test-js`) and the bindings stay in sync, independently of
   # the napi multi-target cross-build matrix below.
   native-test:
+    if: github.repository == 'n0-computer/iroh-ffi'
     name: JS - Native test (macOS-arm64)
     timeout-minutes: 30
     runs-on: [self-hosted, macOS, ARM64]
@@ -50,6 +51,7 @@ jobs:
         run: cargo make test-js
 
   build:
+    if: github.repository == 'n0-computer/iroh-ffi'
     strategy:
       fail-fast: false
       matrix:
@@ -202,6 +204,7 @@ jobs:
           path: iroh-js/${{ env.APP_NAME }}.*.node
           if-no-files-found: error
   test-macOS-windows-binding:
+    if: github.repository == 'n0-computer/iroh-ffi'
     name: Test bindings on ${{ matrix.settings.target }} - node@${{ matrix.node }}
     needs:
       - build
@@ -241,6 +244,7 @@ jobs:
       - name: Test bindings
         run: yarn test
   test-linux-x64-gnu-binding:
+    if: github.repository == 'n0-computer/iroh-ffi'
     name: Test bindings on Linux-x64-gnu - node@${{ matrix.node }}
     needs:
       - build
@@ -281,6 +285,7 @@ jobs:
         # so napi loads the wrong native binding.
         run: docker run --rm --platform linux/amd64 -v $(pwd):/build -w /build node:${{ matrix.node }}-slim sh -c "npm install -g corepack --force && corepack enable && yarn test"
   test-linux-x64-musl-binding:
+    if: github.repository == 'n0-computer/iroh-ffi'
     name: Test bindings on x86_64-unknown-linux-musl - node@${{ matrix.node }}
     needs:
       - build
@@ -319,6 +324,7 @@ jobs:
         # Force amd64 for the same reason as the gnu variant above.
         run: docker run --rm --platform linux/amd64 -v $(pwd):/build -w /build node:${{ matrix.node }}-alpine sh -c "npm install -g corepack --force && corepack enable && yarn test"
   test-linux-aarch64-gnu-binding:
+    if: github.repository == 'n0-computer/iroh-ffi'
     name: Test bindings on aarch64-unknown-linux-gnu - node@${{ matrix.node }}
     needs:
       - build
@@ -371,6 +377,7 @@ jobs:
             yarn test
             ls -la
   test-linux-aarch64-musl-binding:
+    if: github.repository == 'n0-computer/iroh-ffi'
     name: Test bindings on aarch64-unknown-linux-musl - node@${{ matrix.node }}
     needs:
       - build
@@ -422,6 +429,7 @@ jobs:
             corepack enable
             yarn test
   test-linux-arm-gnueabihf-binding:
+    if: github.repository == 'n0-computer/iroh-ffi'
     name: Test bindings on armv7-unknown-linux-gnueabihf - node@${{ matrix.node }}
     needs:
       - build
@@ -472,6 +480,7 @@ jobs:
             yarn test
             ls -la
   publish:
+    if: github.repository == 'n0-computer/iroh-ffi'
     name: Publish
     runs-on: ubuntu-latest
     defaults:

@@ -1110,6 +1110,168 @@ public func FfiConverterTypeBiStream_lower(_ value: BiStream) -> UInt64 {
 
 
 /**
+ * A cancellable outgoing connection attempt.
+ *
+ * Creation is synchronous and performs no network work. [`Self::connect`]
+ * covers both iroh address lookup and the QUIC handshake with one
+ * cancellation token. Calling [`Self::cancel`] more than once is safe, and
+ * dropping the final handle also cancels the token.
+ */
+public protocol ConnectAttemptProtocol: AnyObject, Sendable {
+
+    /**
+     * Cancel this attempt. This operation is synchronous and idempotent.
+     */
+    func cancel()
+
+    /**
+     * Run address lookup and the QUIC handshake, unless cancelled first.
+     */
+    func connect() async throws  -> Connection
+
+}
+/**
+ * A cancellable outgoing connection attempt.
+ *
+ * Creation is synchronous and performs no network work. [`Self::connect`]
+ * covers both iroh address lookup and the QUIC handshake with one
+ * cancellation token. Calling [`Self::cancel`] more than once is safe, and
+ * dropping the final handle also cancels the token.
+ */
+open class ConnectAttempt: ConnectAttemptProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_iroh_ffi_fn_clone_connectattempt(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_iroh_ffi_fn_free_connectattempt(handle, $0) }
+    }
+
+
+
+
+    /**
+     * Cancel this attempt. This operation is synchronous and idempotent.
+     */
+open func cancel()  {try! rustCall() {
+    uniffi_iroh_ffi_fn_method_connectattempt_cancel(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
+
+    /**
+     * Run address lookup and the QUIC handshake, unless cancelled first.
+     */
+open func connect()async throws  -> Connection  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_iroh_ffi_fn_method_connectattempt_connect(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_iroh_ffi_rust_future_poll_u64,
+            completeFunc: ffi_iroh_ffi_rust_future_complete_u64,
+            freeFunc: ffi_iroh_ffi_rust_future_free_u64,
+            liftFunc: FfiConverterTypeConnection_lift,
+            errorHandler: FfiConverterTypeIrohError__as_error_lift
+        )
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeConnectAttempt: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = ConnectAttempt
+
+    public static func lift(_ handle: UInt64) throws -> ConnectAttempt {
+        return ConnectAttempt(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: ConnectAttempt) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ConnectAttempt {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: ConnectAttempt, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeConnectAttempt_lift(_ handle: UInt64) throws -> ConnectAttempt {
+    return try FfiConverterTypeConnectAttempt.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeConnectAttempt_lower(_ value: ConnectAttempt) -> UInt64 {
+    return FfiConverterTypeConnectAttempt.lower(value)
+}
+
+
+
+
+
+
+/**
  * A client-side handshake in progress. Await with [`Self::connect`].
  */
 public protocol ConnectingProtocol: AnyObject, Sendable {
@@ -1900,6 +2062,12 @@ public protocol EndpointProtocol: AnyObject, Sendable {
      * The [`EndpointAddr`] for this endpoint (id + currently known addresses).
      */
     func addr()  -> EndpointAddr
+
+    /**
+     * Create a cancellable outgoing connection attempt without starting any
+     * address lookup or network I/O.
+     */
+    func beginConnect(addr: EndpointAddr, alpn: Data) throws  -> ConnectAttempt
     
     /**
      * The local socket addresses this endpoint is bound to.
@@ -1911,6 +2079,11 @@ public protocol EndpointProtocol: AnyObject, Sendable {
      */
     func close() async throws 
     
+    /**
+     * Wait until the endpoint closes, including an unexpected driver exit.
+     */
+    func closed() async
+
     /**
      * Connect to a remote endpoint via the given ALPN.
      */
@@ -1933,6 +2106,10 @@ public protocol EndpointProtocol: AnyObject, Sendable {
     
     /**
      * Insert (or replace) a relay configuration at runtime.
+     *
+     * Replacing the configuration for an active relay restarts only that
+     * relay client so updated authentication takes effect. The endpoint's
+     * identity and existing QUIC connections remain intact.
      */
     func insertRelay(config: RelayConfig) async throws 
     
@@ -2134,6 +2311,20 @@ open func addr() -> EndpointAddr  {
     )
 })
 }
+
+    /**
+     * Create a cancellable outgoing connection attempt without starting any
+     * address lookup or network I/O.
+     */
+open func beginConnect(addr: EndpointAddr, alpn: Data)throws  -> ConnectAttempt  {
+    return try  FfiConverterTypeConnectAttempt_lift(try rustCallWithError(FfiConverterTypeIrohError__as_error_lift) {
+    uniffi_iroh_ffi_fn_method_endpoint_begin_connect(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeEndpointAddr_lower(addr),
+        FfiConverterData.lower(alpn),$0
+    )
+})
+}
     
     /**
      * The local socket addresses this endpoint is bound to.
@@ -2167,23 +2358,32 @@ open func close()async throws   {
 }
     
     /**
+     * Wait until the endpoint closes, including an unexpected driver exit.
+     */
+open func closed()async   {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_iroh_ffi_fn_method_endpoint_closed(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_iroh_ffi_rust_future_poll_void,
+            completeFunc: ffi_iroh_ffi_rust_future_complete_void,
+            freeFunc: ffi_iroh_ffi_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: nil
+
+        )
+}
+
+    /**
      * Connect to a remote endpoint via the given ALPN.
      */
 open func connect(addr: EndpointAddr, alpn: Data)async throws  -> Connection  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_iroh_ffi_fn_method_endpoint_connect(
-                    self.uniffiCloneHandle(),
-                    FfiConverterTypeEndpointAddr_lower(addr),FfiConverterData.lower(alpn)
-                )
-            },
-            pollFunc: ffi_iroh_ffi_rust_future_poll_u64,
-            completeFunc: ffi_iroh_ffi_rust_future_complete_u64,
-            freeFunc: ffi_iroh_ffi_rust_future_free_u64,
-            liftFunc: FfiConverterTypeConnection_lift,
-            errorHandler: FfiConverterTypeIrohError__as_error_lift
-        )
+    let attempt = try beginConnect(addr: addr, alpn: alpn)
+    return try await irohConnectWithTaskCancellation(attempt: attempt)
 }
     
     /**
@@ -2224,6 +2424,10 @@ open func id() -> EndpointId  {
     
     /**
      * Insert (or replace) a relay configuration at runtime.
+     *
+     * Replacing the configuration for an active relay restarts only that
+     * relay client so updated authentication takes effect. The endpoint's
+     * identity and existing QUIC connections remain intact.
      */
 open func insertRelay(config: RelayConfig)async throws   {
     return
@@ -2708,14 +2912,10 @@ public protocol EndpointBuilderProtocol: AnyObject, Sendable {
     /**
      * Consume the builder and bind a new [`Endpoint`].
      *
-     * Returns an `Endpoint` without protocol handlers attached. To attach
-     * protocol handlers, use [`Endpoint::bind`] with
-     * [`EndpointOptions::protocols`] instead — the builder form here is
-     * for callers who don't need custom protocols.
-     *
-     * The builder is single-use: a second call to `bind` (or to any other
-     * `take_inner`-using method like `bind_addr`) on the same instance
-     * returns `EndpointBuilder already consumed`.
+     * The returned `Endpoint` has no protocol handlers — use
+     * [`Endpoint::bind`] with [`EndpointOptions::protocols`] to attach them.
+     * The builder is single-use; a second `bind` returns
+     * `EndpointBuilder already consumed`.
      */
     func bind() async throws  -> Endpoint
     
@@ -2784,15 +2984,9 @@ open class EndpointBuilder: EndpointBuilderProtocol, @unchecked Sendable {
         return try! rustCall { uniffi_iroh_ffi_fn_clone_endpointbuilder(self.handle, $0) }
     }
     /**
-     * Create a fresh empty endpoint builder.
-     *
-     * Apply a preset (`apply_n0`, `apply_minimal`, `apply_n0_disable_relay`)
-     * before [`bind`](Self::bind) — the preset installs the crypto provider
-     * and other required configuration; without one, `bind` will error.
-     *
-     * For the simple `Endpoint::bind(options)` path use that constructor
-     * instead; this builder API is for callers who want to apply
-     * configuration incrementally.
+     * Create a fresh empty endpoint builder. Apply a preset (`apply_n0`,
+     * `apply_minimal`, `apply_n0_disable_relay`) before [`bind`](Self::bind);
+     * the preset installs the crypto provider, without one `bind` will error.
      */
 public convenience init() {
     let handle =
@@ -2859,14 +3053,10 @@ open func applyN0DisableRelay()  {try! rustCall() {
     /**
      * Consume the builder and bind a new [`Endpoint`].
      *
-     * Returns an `Endpoint` without protocol handlers attached. To attach
-     * protocol handlers, use [`Endpoint::bind`] with
-     * [`EndpointOptions::protocols`] instead — the builder form here is
-     * for callers who don't need custom protocols.
-     *
-     * The builder is single-use: a second call to `bind` (or to any other
-     * `take_inner`-using method like `bind_addr`) on the same instance
-     * returns `EndpointBuilder already consumed`.
+     * The returned `Endpoint` has no protocol handlers — use
+     * [`Endpoint::bind`] with [`EndpointOptions::protocols`] to attach them.
+     * The builder is single-use; a second `bind` returns
+     * `EndpointBuilder already consumed`.
      */
 open func bind()async throws  -> Endpoint  {
     return
@@ -7557,6 +7747,12 @@ public struct EndpointOptions {
      * supplied handlers.
      */
     public var protocols: [Data: ProtocolCreator]?
+    /**
+     * Override UPnP, PCP, and NAT-PMP gateway port mapping. `None` preserves
+     * the chosen preset / iroh default; `Some(false)` skips SSDP and gateway
+     * probing while retaining direct connections, hole punching, and relays.
+     */
+    public var portMappingEnabled: Bool?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -7585,13 +7781,19 @@ public struct EndpointOptions {
          * Custom protocols to accept on this endpoint, keyed by ALPN. If provided,
          * an internal router is spawned to dispatch incoming connections to the
          * supplied handlers.
-         */protocols: [Data: ProtocolCreator]? = nil) {
+         */protocols: [Data: ProtocolCreator]? = nil, 
+        /**
+         * Override UPnP, PCP, and NAT-PMP gateway port mapping. `None` preserves
+         * the chosen preset / iroh default; `Some(false)` skips SSDP and gateway
+         * probing while retaining direct connections, hole punching, and relays.
+         */portMappingEnabled: Bool? = nil) {
         self.preset = preset
         self.bindAddr = bindAddr
         self.secretKey = secretKey
         self.alpns = alpns
         self.relayMode = relayMode
         self.protocols = protocols
+        self.portMappingEnabled = portMappingEnabled
     }
 
     
@@ -7615,7 +7817,8 @@ public struct FfiConverterTypeEndpointOptions: FfiConverterRustBuffer {
                 secretKey: FfiConverterOptionData.read(from: &buf), 
                 alpns: FfiConverterOptionSequenceData.read(from: &buf), 
                 relayMode: FfiConverterOptionTypeRelayMode.read(from: &buf), 
-                protocols: FfiConverterOptionDictionaryDataTypeProtocolCreator.read(from: &buf)
+                protocols: FfiConverterOptionDictionaryDataTypeProtocolCreator.read(from: &buf), 
+                portMappingEnabled: FfiConverterOptionBool.read(from: &buf)
         )
     }
 
@@ -7626,6 +7829,7 @@ public struct FfiConverterTypeEndpointOptions: FfiConverterRustBuffer {
         FfiConverterOptionSequenceData.write(value.alpns, into: &buf)
         FfiConverterOptionTypeRelayMode.write(value.relayMode, into: &buf)
         FfiConverterOptionDictionaryDataTypeProtocolCreator.write(value.protocols, into: &buf)
+        FfiConverterOptionBool.write(value.portMappingEnabled, into: &buf)
     }
 }
 
@@ -9299,6 +9503,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_iroh_ffi_checksum_method_bistream_send() != 17421) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_iroh_ffi_checksum_method_connectattempt_cancel() != 17982) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_iroh_ffi_checksum_method_connectattempt_connect() != 5207) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_iroh_ffi_checksum_method_connection_accept_bi() != 24717) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -9380,10 +9590,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_iroh_ffi_checksum_method_endpoint_addr() != 25271) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_iroh_ffi_checksum_method_endpoint_begin_connect() != 11472) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_iroh_ffi_checksum_method_endpoint_bound_sockets() != 64249) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_iroh_ffi_checksum_method_endpoint_close() != 8483) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_iroh_ffi_checksum_method_endpoint_closed() != 40721) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_iroh_ffi_checksum_method_endpoint_connect() != 28652) {
@@ -9395,7 +9611,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_iroh_ffi_checksum_method_endpoint_id() != 21819) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_iroh_ffi_checksum_method_endpoint_insert_relay() != 12359) {
+    if (uniffi_iroh_ffi_checksum_method_endpoint_insert_relay() != 29865) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_iroh_ffi_checksum_method_endpoint_is_closed() != 32495) {
@@ -9443,7 +9659,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_iroh_ffi_checksum_method_endpointbuilder_apply_n0_disable_relay() != 20494) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_iroh_ffi_checksum_method_endpointbuilder_bind() != 18280) {
+    if (uniffi_iroh_ffi_checksum_method_endpointbuilder_bind() != 5850) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_iroh_ffi_checksum_method_endpointbuilder_bind_addr() != 50528) {
@@ -9608,7 +9824,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_iroh_ffi_checksum_constructor_endpoint_bind() != 33964) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_iroh_ffi_checksum_constructor_endpointbuilder_new() != 38003) {
+    if (uniffi_iroh_ffi_checksum_constructor_endpointbuilder_new() != 16347) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_iroh_ffi_checksum_constructor_endpointid_from_bytes() != 63462) {

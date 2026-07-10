@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Rewrite the version literals across the repo as a single source of truth.
 
-Two mutually-exclusive entry points (enforced by main()):
+Three mutually-exclusive entry points (enforced by main()):
 
   1. VERSION positional arg — `cargo make prepare-release <V>` route. Bumps
      Cargo.toml [package].version, iroh-js/{Cargo.toml,package.json}, all
@@ -13,6 +13,11 @@ Two mutually-exclusive entry points (enforced by main()):
      Package.swift releaseChecksum and returns. Does NOT bump any version
      literals; that's the local prepare-release author's job and must
      already be in the release commit by the time CI runs.
+
+  3. --swift-release VERSION --swift-repository OWNER/REPO — cmux fork
+     bootstrap route. Writes ONLY Package.swift releaseRepository and
+     releaseTag. The old published checksum intentionally remains until CI
+     builds the new asset and commits its exact checksum on the release branch.
 
 Pure deterministic text/JSON transforms — no model, no network (org Rule 5).
 """
@@ -137,6 +142,24 @@ def bump_swift_tag(version: str) -> None:
     print(f'  Package.swift releaseTag -> "v{version}"')
 
 
+def prepare_swift_release(version: str, repository: str) -> None:
+    if not re.fullmatch(r"[0-9A-Za-z_.-]+/[0-9A-Za-z_.-]+", repository):
+        sys.exit(f"{repository!r} is not an OWNER/REPO GitHub repository")
+    p = REPO / "Package.swift"
+    s = p.read_text()
+    new, n = re.subn(
+        r'let releaseRepository = "[^"]+"',
+        f'let releaseRepository = "{repository}"',
+        s,
+        count=1,
+    )
+    if n != 1:
+        sys.exit("could not find releaseRepository in Package.swift")
+    p.write_text(new)
+    print(f'  Package.swift releaseRepository -> "{repository}"')
+    bump_swift_tag(version)
+
+
 def write_swift_checksum(checksum: str) -> None:
     if not re.fullmatch(r"[0-9a-f]{64}", checksum):
         sys.exit(f"checksum {checksum!r} is not a 64-char lowercase hex SHA-256")
@@ -158,21 +181,32 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("version", nargs="?", help='e.g. "1.0.0-rc.1" (no leading v)')
     ap.add_argument("--checksum", help="64-char SHA-256 hex; writes only releaseChecksum")
+    ap.add_argument("--swift-release", help="Swift-only release version (no leading v)")
+    ap.add_argument(
+        "--swift-repository",
+        help="OWNER/REPO used with --swift-release",
+    )
     args = ap.parse_args()
 
-    if args.checksum and args.version:
-        sys.exit("pass either VERSION or --checksum, not both")
-    if not args.checksum and not args.version:
-        ap.error("VERSION or --checksum required")
+    modes = sum(bool(value) for value in (args.version, args.checksum, args.swift_release))
+    if modes != 1:
+        sys.exit("pass exactly one of VERSION, --checksum, or --swift-release")
+    if bool(args.swift_repository) != bool(args.swift_release):
+        sys.exit("--swift-repository is required with, and only with, --swift-release")
 
     if args.checksum:
         write_swift_checksum(args.checksum)
         return
 
-    v = args.version.lstrip("v")
+    v = (args.swift_release or args.version).lstrip("v")
     # Permissive semver (incl. pre-release like 1.0.0-rc.1).
     if not re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", v):
         sys.exit(f"{v!r} is not a recognized semver string")
+    if args.swift_release:
+        print(f"preparing Swift-only release v{v}:")
+        prepare_swift_release(v, args.swift_repository)
+        return
+
     print(f"bumping versions to {v}:")
     bump_cargo(v)
     bump_js_cargo(v)

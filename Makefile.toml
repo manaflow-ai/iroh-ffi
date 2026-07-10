@@ -8,13 +8,13 @@
 #   cargo make test-python
 #   cargo make test-js
 #   cargo make test-kotlin
-#   cargo make test-swift        # macOS-arm64 slice (fast, for local/CI test)
+#   cargo make test-swift        # native macOS slice (arm64 or x86_64)
 #   cargo make format            # rustfmt (workspace)
 #   cargo make clippy
 #
 # Bindgen / packaging:
 #   cargo make bindgen-kotlin
-#   cargo make swift-xcframework # full 4-target Apple xcframework (release)
+#   cargo make swift-xcframework # full 5-target Apple xcframework (release)
 #   cargo make python-wheel
 #
 # Most tasks are workspace = false so cargo-make does not fan out per member.
@@ -202,8 +202,9 @@ set -eu
 # Iroh.framework (missing the freshly built uniffi symbols). A fresh path per
 # run forces re-extraction of the just-built xcframework.
 #
-# Run xcodebuild as the logged-in console user and force arm64, so it uses
-# the right session and the arm64-only xcframework macOS slice.
+# Run xcodebuild as the logged-in console user and force the host's native
+# architecture. This exercises arm64 on supported Apple Silicon hosts and
+# x86_64 on the Intel macOS 14 CI runner through the same behavior tests.
 CONSOLE_USER=$(stat -f%Su /dev/console)
 CONSOLE_UID=$(id -u "$CONSOLE_USER")
 echo "console user: $CONSOLE_USER ($CONSOLE_UID)"
@@ -211,9 +212,16 @@ if [ "$CONSOLE_USER" = "root" ]; then
   echo "ERROR: no interactive GUI session; cannot run xcodebuild test" >&2
   exit 1
 fi
+HOST_ARCH=$(scripts/apple_hardware_arch.sh)
+case "$HOST_ARCH" in
+  arm64|x86_64) ;;
+  *) echo "ERROR: unsupported macOS architecture: $HOST_ARCH" >&2; exit 1 ;;
+esac
 rm -rf .xcode-ddata
-launchctl asuser "$CONSOLE_UID" arch -arm64 xcodebuild test \
-  -scheme IrohLib -destination 'platform=macOS' -derivedDataPath .xcode-ddata
+launchctl asuser "$CONSOLE_UID" arch -"$HOST_ARCH" xcodebuild test \
+  -scheme IrohLib -destination 'platform=macOS' -derivedDataPath .xcode-ddata \
+  ARCHS="$HOST_ARCH" ONLY_ACTIVE_ARCH=YES
+bash scripts/verify_swift_multi_xcframework_consumer.sh
 '''
 
 [tasks.swift-xcframework]
@@ -241,12 +249,12 @@ set -eu
 # ---------------------------------------------------------------------------
 
 [tasks.verify-swift-xcframework]
-description = "Verify Iroh.xcframework slices have the flat -library layout xcodebuild produces (libiroh_ffi.a + Headers/, no .framework directory). Catches stale-skeleton remnants from before the build pivoted off the hand-laid Iroh.framework approach."
+description = "Verify product-scoped static framework layout, platform variants, and binary architectures, including universal arm64+x86_64 macOS support."
 script_runner = "@shell"
 script = '''
 set -eu
 XCF="${IROH_XCFRAMEWORK:-Iroh.xcframework}"
-LIB="libiroh_ffi.a"
+FW="Iroh"
 [ -d "$XCF" ] || { echo "ERROR: $XCF not found (build it first: cargo make swift-xcframework)" >&2; exit 1; }
 [ -f "$XCF/Info.plist" ] || { echo "ERROR: missing $XCF/Info.plist" >&2; exit 1; }
 
@@ -256,20 +264,110 @@ err() { printf 'FAIL: %s\n' "$*" >&2; fail=1; }
 for slice_dir in "$XCF"/*/; do
   slice=$(basename "$slice_dir")
   printf '  slice %s\n' "$slice"
+  framework="$slice_dir/$FW.framework"
+  [ -d "$framework" ] || { err "$slice: missing $FW.framework"; continue; }
+  [ ! -e "$slice_dir/Headers/module.modulemap" ] || err "$slice: module map escaped the product-scoped framework"
 
-  # Flat library layout: each slice has lib.a + Headers/ at the slice root.
-  # No .framework directory anywhere — that was the deprecated hand-laid
-  # pattern that needed per-Xcode-major maintenance.
-  [ -f "$slice_dir/$LIB" ]                       || err "$slice: missing $LIB"
-  [ -d "$slice_dir/Headers" ]                    || err "$slice: missing Headers/"
-  [ -f "$slice_dir/Headers/iroh_ffiFFI.h" ]      || err "$slice: missing Headers/iroh_ffiFFI.h"
-  [ -f "$slice_dir/Headers/Export.h" ]           || err "$slice: missing Headers/Export.h (umbrella)"
-  [ -f "$slice_dir/Headers/module.modulemap" ]   || err "$slice: missing Headers/module.modulemap"
-  [ -d "$slice_dir/Iroh.framework" ]             && err "$slice: stale Iroh.framework/ present — xcodebuild -create-xcframework -library produces a flat layout with no .framework dir"
+  case "$slice" in
+    macos-*)
+      binary="$framework/Versions/A/$FW"
+      headers="$framework/Versions/A/Headers"
+      modules="$framework/Versions/A/Modules"
+      [ -f "$framework/Versions/A/Resources/Info.plist" ] || err "$slice: missing versioned Info.plist"
+      [ -L "$framework/Versions/Current" ] || err "$slice: Versions/Current is not a symlink"
+      [ "$(readlink "$framework/Versions/Current" 2>/dev/null || true)" = A ] || err "$slice: Versions/Current does not point to A"
+      [ -L "$framework/$FW" ] || err "$slice: top-level binary is not a symlink"
+      [ -L "$framework/Headers" ] || err "$slice: top-level Headers is not a symlink"
+      [ -L "$framework/Modules" ] || err "$slice: top-level Modules is not a symlink"
+      ;;
+    *)
+      binary="$framework/$FW"
+      headers="$framework/Headers"
+      modules="$framework/Modules"
+      [ -f "$framework/Info.plist" ] || err "$slice: missing shallow Info.plist"
+      [ ! -d "$framework/Versions" ] || err "$slice: iOS framework unexpectedly uses a versioned layout"
+      ;;
+  esac
+
+  [ -f "$binary" ] || err "$slice: missing static framework binary"
+  [ -f "$headers/iroh_ffiFFI.h" ] || err "$slice: missing Headers/iroh_ffiFFI.h"
+  [ -f "$headers/Export.h" ] || err "$slice: missing Headers/Export.h"
+  [ -f "$modules/module.modulemap" ] || err "$slice: missing Modules/module.modulemap"
+  grep -q "framework module $FW" "$modules/module.modulemap" 2>/dev/null || err "$slice: module map is not framework-scoped"
+  file -b "$binary" 2>/dev/null | grep -q 'current ar archive' || err "$slice: framework binary is not a static archive"
 done
+
+plutil -p "$XCF/Info.plist" | grep -q 'HeadersPath' && err "outer Info.plist exposes flat HeadersPath entries"
+
+# Verify the artifact's actual Mach-O slices. This catches a successful
+# cross-build that was accidentally omitted from the shipped xcframework.
+IOS_DEVICE=$(find "$XCF" -type f -path '*/ios-arm64/Iroh.framework/Iroh' -print -quit)
+IOS_SIM=$(find "$XCF" -type f -path '*/ios-arm64_x86_64-simulator/Iroh.framework/Iroh' -print -quit)
+MACOS=$(find "$XCF" -type f -path '*/macos-*/Iroh.framework/Versions/A/Iroh' -print -quit)
+
+[ -n "$IOS_DEVICE" ] || err "missing iOS device arm64 library"
+[ -n "$IOS_SIM" ]    || err "missing universal iOS Simulator library"
+[ -n "$MACOS" ]      || err "missing universal macOS library"
+
+assert_archs() {
+  binary=$1
+  expected=$2
+  label=$3
+  [ -n "$binary" ] || return
+  actual=$(lipo -archs "$binary" | tr ' ' '\n' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
+  [ "$actual" = "$expected" ] || err "$label: architectures '$actual', expected '$expected'"
+}
+
+assert_archs "$IOS_DEVICE" "arm64" "iOS device"
+assert_archs "$IOS_SIM" "arm64 x86_64" "iOS Simulator"
+assert_archs "$MACOS" "arm64 x86_64" "macOS"
+
+# Inspect load commands in every object that otool reports for each
+# architecture. Some Rust compiler-builtins objects support an older OS than
+# the package itself, which is safe. Require the right Apple platform, reject
+# any object that requires a newer OS, and require at least one object to
+# advertise the package's intended floor.
+assert_build_versions() {
+  binary=$1
+  arch=$2
+  expected_platform=$3
+  maximum=$4
+  label=$5
+  [ -n "$binary" ] || return
+  build_commands=$(xcrun otool -arch "$arch" -l "$binary")
+  platforms=$(printf '%s\n' "$build_commands" | awk '$1 == "platform" { print $2 }' | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')
+  min_versions=$(printf '%s\n' "$build_commands" | awk '$1 == "minos" { print $2 }' | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')
+  [ "$platforms" = "$expected_platform" ] || err "$label: LC_BUILD_VERSION platforms '$platforms', expected '$expected_platform'"
+  [ -n "$min_versions" ] || { err "$label: no LC_BUILD_VERSION minimum found"; return; }
+  printf '%s\n' "$min_versions" | tr ' ' '\n' | grep -qx "$maximum" || err "$label: no object advertises intended minimum $maximum (found '$min_versions')"
+  for version in $min_versions; do
+    awk -v actual="$version" -v maximum="$maximum" '
+      function encoded(v, parts) {
+        split(v, parts, ".")
+        return (parts[1] + 0) * 1000000 + (parts[2] + 0) * 1000 + (parts[3] + 0)
+      }
+      BEGIN { exit !(encoded(actual) <= encoded(maximum)) }
+    ' || err "$label: object requires $version, newer than supported floor $maximum"
+  done
+}
+
+# LC_BUILD_VERSION platform constants: 1 = macOS, 2 = iOS, 7 = iOS Simulator.
+assert_build_versions "$IOS_DEVICE" "arm64" "2" "17.5" "iOS device arm64"
+assert_build_versions "$IOS_SIM" "arm64" "7" "17.5" "iOS Simulator arm64"
+assert_build_versions "$IOS_SIM" "x86_64" "7" "17.5" "iOS Simulator x86_64"
+assert_build_versions "$MACOS" "arm64" "1" "14.0" "macOS arm64"
+assert_build_versions "$MACOS" "x86_64" "1" "14.0" "macOS x86_64"
 
 [ $fail -eq 0 ] || { echo "verify-swift-xcframework: FAILED" >&2; exit 1; }
 echo "verify-swift-xcframework: OK"
+'''
+
+[tasks.verify-swift-multi-xcframework-consumer]
+description = "Build a package that combines Iroh with a second flat static XCFramework, proving module maps do not collide and Iroh remains statically linked."
+script_runner = "@shell"
+script = '''
+set -eu
+bash scripts/verify_swift_multi_xcframework_consumer.sh
 '''
 
 [tasks.verify-kotlin-artifact]
@@ -394,12 +492,18 @@ if [ "$CONSOLE_USER" = "root" ]; then
   exit 1
 fi
 
+HOST_ARCH=$(scripts/apple_hardware_arch.sh)
+case "$HOST_ARCH" in
+  arm64|x86_64) ;;
+  *) echo "ERROR: unsupported macOS architecture: $HOST_ARCH" >&2; exit 1 ;;
+esac
+
 rm -rf .xcode-verify-ddata
 
 # 1. iOS device — build only. Real-device deploy needs signing; build is
 #    enough to catch link/symbol errors specific to the device slice.
 echo "==> xcodebuild build for iOS device (build-only, no run)"
-arch -arm64 xcodebuild build \
+arch -"$HOST_ARCH" xcodebuild build \
   -scheme IrohLib \
   -destination "generic/platform=iOS" \
   -derivedDataPath .xcode-verify-ddata \
@@ -409,29 +513,76 @@ arch -arm64 xcodebuild build \
 # 2. iOS Simulator — full xcodebuild test boots a sim, installs the test
 #    bundle, and runs IrohLibTests on the iOS runtime. Catches "links but
 #    crashes on iOS startup" + verifies the simulator slice actually loads.
-#    Pick any available iOS Simulator via simctl: local dev (iPhone 17 Pro,
-#    iPhone Air, …) and CI (iPhone 16 default) both work, no hardcoded name
-#    to keep up with Apple's annual lineup.
-SIM_ID=$(xcrun simctl list devices available -j | python3 -c '
-import json, sys
+#
+#    CoreSimulator's global registry can contain devices from newer Xcodes.
+#    Selecting the first "available" UUID can therefore hand Xcode 15 a
+#    device created for an unsupported iOS runtime. Create an isolated device
+#    from the active Xcode's simulator SDK/runtime instead, then remove it.
+SIM_ID=""
+cleanup_simulator() {
+  if [ -n "$SIM_ID" ]; then
+    launchctl asuser "$CONSOLE_UID" arch -"$HOST_ARCH" xcrun simctl shutdown "$SIM_ID" >/dev/null 2>&1 || true
+    launchctl asuser "$CONSOLE_UID" arch -"$HOST_ARCH" xcrun simctl delete "$SIM_ID" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup_simulator EXIT INT TERM
+
+if [ -n "${IROH_IOS_SIM_DEST:-}" ]; then
+  DEST="$IROH_IOS_SIM_DEST"
+else
+  SIM_SDK_VERSION=$(arch -"$HOST_ARCH" xcrun --sdk iphonesimulator --show-sdk-version)
+  SIM_RUNTIME=$(arch -"$HOST_ARCH" xcrun simctl list runtimes available -j | python3 -c '
+import json, re, sys
+
+sdk = tuple(int(n) for n in re.findall(r"\d+", sys.argv[1]))
 data = json.load(sys.stdin)
-for runtime, devices in data["devices"].items():
-    if "SimRuntime.iOS" in runtime:
-        for d in devices:
-            if d.get("isAvailable"):
-                print(d["udid"]); sys.exit(0)
+candidates = []
+for runtime in data.get("runtimes", []):
+    identifier = runtime.get("identifier", "")
+    version = tuple(int(n) for n in re.findall(r"\d+", runtime.get("version", "")))
+    if runtime.get("isAvailable") and "SimRuntime.iOS" in identifier and version <= sdk:
+        candidates.append((version, identifier))
+if not candidates:
+    sys.exit(1)
+print(max(candidates)[1])
+' "$SIM_SDK_VERSION" || true)
+  if [ -z "$SIM_RUNTIME" ]; then
+    echo "ERROR: no iOS Simulator runtime compatible with active SDK $SIM_SDK_VERSION." >&2
+    echo "  Install one via Xcode > Settings > Components." >&2
+    exit 1
+  fi
+
+  SIM_DEVICE_TYPE=$(arch -"$HOST_ARCH" xcrun simctl list devicetypes -j | python3 -c '
+import json, sys
+
+devices = json.load(sys.stdin).get("devicetypes", [])
+for preferred in ("iPhone 15", "iPhone 14"):
+    for device in devices:
+        if device.get("name") == preferred:
+            print(device["identifier"]); sys.exit(0)
+for device in devices:
+    if device.get("name", "").startswith("iPhone"):
+        print(device["identifier"]); sys.exit(0)
 sys.exit(1)
 ' || true)
-if [ -z "$SIM_ID" ]; then
-  echo "ERROR: no available iOS Simulator. Install one via Xcode > Settings > Components." >&2
-  exit 1
+  if [ -z "$SIM_DEVICE_TYPE" ]; then
+    echo "ERROR: active Xcode has no iPhone Simulator device type." >&2
+    exit 1
+  fi
+
+  SIM_NAME="IrohLib-${GITHUB_RUN_ID:-local}-$$"
+  SIM_ID=$(launchctl asuser "$CONSOLE_UID" arch -"$HOST_ARCH" xcrun simctl create \
+    "$SIM_NAME" "$SIM_DEVICE_TYPE" "$SIM_RUNTIME")
+  launchctl asuser "$CONSOLE_UID" arch -"$HOST_ARCH" xcrun simctl boot "$SIM_ID"
+  launchctl asuser "$CONSOLE_UID" arch -"$HOST_ARCH" xcrun simctl bootstatus "$SIM_ID" -b
+  DEST="platform=iOS Simulator,id=$SIM_ID"
 fi
-DEST="${IROH_IOS_SIM_DEST:-platform=iOS Simulator,id=$SIM_ID}"
 echo "==> xcodebuild test on iOS Simulator ($DEST)"
-launchctl asuser "$CONSOLE_UID" arch -arm64 xcodebuild test \
+launchctl asuser "$CONSOLE_UID" arch -"$HOST_ARCH" xcodebuild test \
   -scheme IrohLib \
   -destination "$DEST" \
-  -derivedDataPath .xcode-verify-ddata
+  -derivedDataPath .xcode-verify-ddata \
+  ARCHS="$HOST_ARCH" ONLY_ACTIVE_ARCH=YES
 
 echo "verify-swift-consumer: OK"
 '''
@@ -491,10 +642,10 @@ args = ["scripts/verify_kotlin_consumer.sh"]
 
 [tasks.docs-swift]
 description = "Build the Swift DocC docs, laid out for Pages static hosting."
-# Always builds the full 4-target xcframework. The previous `swift-macos-
+# Always builds the full 5-target xcframework. The previous `swift-macos-
 # framework` macOS-only path used a hand-laid framework skeleton; with the
-# `xcodebuild -create-xcframework -library` build pipeline, all four slices
-# come from the same one-shot xcodebuild invocation and there's no slim
+# generated static-framework pipeline, all five targets feed one xcframework
+# invocation and there's no slim
 # macOS-only fast-path worth maintaining separately.
 dependencies = ["swift-xcframework"]
 script_runner = "@shell"
@@ -600,6 +751,7 @@ fi
 echo "==> swift: build + verify layout + iOS sim test + same-host zip determinism"
 cargo make swift-xcframework >/dev/null
 cargo make verify-swift-xcframework >/dev/null
+cargo make verify-swift-multi-xcframework-consumer >/dev/null
 cargo make verify-swift-consumer >/dev/null
 bash scripts/release/zip_xcframework.sh
 H1=$(shasum -a 256 IrohLib.xcframework.zip | awk '{print $1}')
@@ -687,6 +839,28 @@ Next:
   git tag v$VERSION <merge-commit-sha>
   git push origin v$VERSION
   # release.yml promotes the draft release to published.
+EOF
+'''
+
+[tasks.prepare-swift-fork-release]
+description = "Prepare an isolated cmux-fork Swift release branch without breaking the default branch's last published binary URL. Usage: cargo make prepare-swift-fork-release <VERSION>"
+script_runner = "@shell"
+script = '''
+set -eu
+VERSION="${1:?usage: cargo make prepare-swift-fork-release <VERSION> (no leading v)}"
+
+python3 scripts/release/bump_version.py \
+  --swift-release "$VERSION" \
+  --swift-repository manaflow-ai/iroh-ffi
+
+cat <<EOF
+
+Prepared the release-branch manifest for v$VERSION. Its checksum still names
+the previous published artifact until release_swift.yml replaces it.
+
+Do not merge this branch yet. Push release/v$VERSION, wait for the checksum
+commit and draft asset, verify them, tag that exact commit, publish the draft,
+then merge. See "cmux fork: safe Swift bootstrap" in RELEASING.md.
 EOF
 '''
 

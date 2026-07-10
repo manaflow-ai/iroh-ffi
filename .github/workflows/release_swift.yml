@@ -5,6 +5,11 @@ name: Release Swift artifact
 # avoid re-firing), and uploads the zip to a draft GitHub release. release.yml
 # promotes the draft to published when the tag is pushed — no rebuild, so the
 # SHA in Package.swift always matches the shipped zip.
+#
+# For the cmux fork's first release, main intentionally keeps pointing at the
+# last published upstream artifact. The release branch switches repository +
+# tag; after this workflow bakes the checksum and uploads the draft, tag and
+# publish that exact commit before merging it. See RELEASING.md.
 
 on:
   push:
@@ -18,26 +23,37 @@ jobs:
   build-and-bake:
     name: Build xcframework + bake SHA + upload draft
     if: "!contains(github.event.head_commit.message, '[skip swift-release]')"
-    runs-on: [self-hosted, macOS, ARM64, xcode16]
-    timeout-minutes: 60
+    runs-on: macos-14
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios,aarch64-apple-darwin
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios,aarch64-apple-darwin,x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
       - uses: davidB/rust-cargo-make@v1
+      - name: Assert ARM Sonoma runner
+        run: |
+          test "$(uname -m)" = arm64
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 14
+          sw_vers
       - name: Build xcframework + verify + zip
         run: |
           cargo make swift-xcframework
           cargo make verify-swift-xcframework
+          cargo make verify-swift-multi-xcframework-consumer
           cargo make verify-swift-consumer
           bash scripts/release/zip_xcframework.sh
       - name: Bake SHA into Package.swift
-        run: bash scripts/release/swift_bake_sha.sh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh auth setup-git
+          bash scripts/release/swift_bake_sha.sh
       - name: Upload zip to draft GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

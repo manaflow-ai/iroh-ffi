@@ -16,9 +16,9 @@ DerivedData/
 
 /IrohLib.xcframework.zip
 
-# The whole xcframework is a build artifact: `xcodebuild -create-xcframework
-# -library` (in make_swift.sh) generates the per-slice lib.a + Headers/ plus
-# the outer Info.plist from scratch. No hand-laid skeleton is checked in.
+# The whole xcframework is a build artifact: make_swift.sh stages per-platform
+# static Iroh.framework bundles, then xcodebuild generates the outer
+# XCFramework metadata. No hand-laid skeleton is checked in.
 /Iroh.xcframework/
 
 /IrohLib/artifacts/

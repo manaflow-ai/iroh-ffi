@@ -18,6 +18,7 @@ env:
 
 jobs:
   manylinux:
+    if: github.repository == 'n0-computer/iroh-ffi'
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }}
     strategy:
@@ -54,6 +55,7 @@ jobs:
           path: target/wheels/*.whl
 
   osx:
+    if: github.repository == 'n0-computer/iroh-ffi'
     # arm64-only: the org has no GitHub-hosted macOS and x86_64 mac wheels
     # were dropped.
     runs-on: [self-hosted, macOS, ARM64]
@@ -74,6 +76,7 @@ jobs:
           path: target/wheels/*.whl
 
   windows:
+    if: github.repository == 'n0-computer/iroh-ffi'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -93,7 +96,7 @@ jobs:
   publish:
     name: Publish wheels to PyPI
     needs: [manylinux, osx, windows]
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    if: github.repository == 'n0-computer/iroh-ffi' && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: [self-hosted, linux, X64]
     # Trusted Publishing (OIDC) — no long-lived PyPI token needed. Requires
     # the publisher to be registered once at
