@@ -376,6 +376,21 @@ final class EndpointTests: XCTestCase {
         try await ep.close()
     }
 
+    func testBindWithInitialIncomingStreamCreditDisabled() async throws {
+        XCTAssertNil(EndpointOptions().initialMaxConcurrentBiStreams)
+        XCTAssertNil(EndpointOptions().initialMaxConcurrentUniStreams)
+        let endpoint = try await Endpoint.bind(
+            options: EndpointOptions(
+                preset: presetMinimal(),
+                initialMaxConcurrentBiStreams: 0,
+                initialMaxConcurrentUniStreams: 0
+            )
+        )
+
+        XCTAssertFalse(endpoint.boundSockets().isEmpty)
+        try await endpoint.close()
+    }
+
     func testDeferredNATAuthorizationPreservesTheExactLiveConnection() async throws {
         XCTAssertNil(EndpointOptions().deferNatTraversalUntilAuthorized)
 

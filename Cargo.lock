@@ -1732,7 +1732,7 @@ dependencies = [
 [[package]]
 name = "iroh"
 version = "1.0.2"
-source = "git+https://github.com/manaflow-ai/iroh.git?rev=829518871066919bcb5f4676b767dd2cc9ac6184#829518871066919bcb5f4676b767dd2cc9ac6184"
+source = "git+https://github.com/manaflow-ai/iroh.git?rev=107cd0e30c0cc27376925b1aabe5c495ec1cf9a7#107cd0e30c0cc27376925b1aabe5c495ec1cf9a7"
 dependencies = [
  "backon",
  "blake3",
@@ -1782,7 +1782,7 @@ dependencies = [
 [[package]]
 name = "iroh-base"
 version = "1.0.2"
-source = "git+https://github.com/manaflow-ai/iroh.git?rev=829518871066919bcb5f4676b767dd2cc9ac6184#829518871066919bcb5f4676b767dd2cc9ac6184"
+source = "git+https://github.com/manaflow-ai/iroh.git?rev=107cd0e30c0cc27376925b1aabe5c495ec1cf9a7#107cd0e30c0cc27376925b1aabe5c495ec1cf9a7"
 dependencies = [
  "curve25519-dalek",
  "data-encoding",
@@ -1800,7 +1800,7 @@ dependencies = [
 [[package]]
 name = "iroh-dns"
 version = "1.0.2"
-source = "git+https://github.com/manaflow-ai/iroh.git?rev=829518871066919bcb5f4676b767dd2cc9ac6184#829518871066919bcb5f4676b767dd2cc9ac6184"
+source = "git+https://github.com/manaflow-ai/iroh.git?rev=107cd0e30c0cc27376925b1aabe5c495ec1cf9a7#107cd0e30c0cc27376925b1aabe5c495ec1cf9a7"
 dependencies = [
  "arc-swap",
  "cfg_aliases",
@@ -1879,7 +1879,7 @@ dependencies = [
 [[package]]
 name = "iroh-relay"
 version = "1.0.2"
-source = "git+https://github.com/manaflow-ai/iroh.git?rev=829518871066919bcb5f4676b767dd2cc9ac6184#829518871066919bcb5f4676b767dd2cc9ac6184"
+source = "git+https://github.com/manaflow-ai/iroh.git?rev=107cd0e30c0cc27376925b1aabe5c495ec1cf9a7#107cd0e30c0cc27376925b1aabe5c495ec1cf9a7"
 dependencies = [
  "blake3",
  "bytes",
@@ -2500,8 +2500,7 @@ dependencies = [
 [[package]]
 name = "noq"
 version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4bf95190af1bd4a00a10e8255ca0c8ddd9e9a9f5e79151d7a7eb6d56aff5dc89"
+source = "git+https://github.com/manaflow-ai/noq.git?rev=d8534ca45d2f00a3db06914b9f265b8f53d35d03#d8534ca45d2f00a3db06914b9f265b8f53d35d03"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2522,8 +2521,7 @@ dependencies = [
 [[package]]
 name = "noq-proto"
 version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa6c890013591e709a3e45dd53501351b7e27e7ff3c7e9fc3dce43e300e7e9d3"
+source = "git+https://github.com/manaflow-ai/noq.git?rev=d8534ca45d2f00a3db06914b9f265b8f53d35d03#d8534ca45d2f00a3db06914b9f265b8f53d35d03"
 dependencies = [
  "aes-gcm",
  "bytes",
@@ -2549,8 +2547,7 @@ dependencies = [
 [[package]]
 name = "noq-udp"
 version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3137a52df66c20090a889828d1c655f21f52294cba64e5c4fbb04fc83eee7c8e"
+source = "git+https://github.com/manaflow-ai/noq.git?rev=d8534ca45d2f00a3db06914b9f265b8f53d35d03#d8534ca45d2f00a3db06914b9f265b8f53d35d03"
 dependencies = [
  "cfg_aliases",
  "libc",

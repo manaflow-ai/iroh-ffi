@@ -42,6 +42,7 @@ from_iroh_err! {
     iroh::endpoint::ConnectionError,
     iroh::endpoint::AlpnError,
     iroh::endpoint::RemoteEndpointIdError,
+    iroh::endpoint::NatTraversalAuthorizationError,
     iroh::endpoint::VarIntBoundsExceeded,
     iroh::endpoint::WriteError,
     iroh::endpoint::ClosedStream,
