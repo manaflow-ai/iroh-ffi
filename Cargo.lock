@@ -1732,7 +1732,7 @@ dependencies = [
 [[package]]
 name = "iroh"
 version = "1.0.2"
-source = "git+https://github.com/manaflow-ai/iroh.git?rev=7f9356ce58cd9b24dffdce3c8c04d4dbff4cc036#7f9356ce58cd9b24dffdce3c8c04d4dbff4cc036"
+source = "git+https://github.com/manaflow-ai/iroh.git?rev=6b2c35ba9209dee17ef20b939804971ab71b938d#6b2c35ba9209dee17ef20b939804971ab71b938d"
 dependencies = [
  "backon",
  "blake3",
@@ -1782,7 +1782,7 @@ dependencies = [
 [[package]]
 name = "iroh-base"
 version = "1.0.2"
-source = "git+https://github.com/manaflow-ai/iroh.git?rev=7f9356ce58cd9b24dffdce3c8c04d4dbff4cc036#7f9356ce58cd9b24dffdce3c8c04d4dbff4cc036"
+source = "git+https://github.com/manaflow-ai/iroh.git?rev=6b2c35ba9209dee17ef20b939804971ab71b938d#6b2c35ba9209dee17ef20b939804971ab71b938d"
 dependencies = [
  "curve25519-dalek",
  "data-encoding",
@@ -1800,7 +1800,7 @@ dependencies = [
 [[package]]
 name = "iroh-dns"
 version = "1.0.2"
-source = "git+https://github.com/manaflow-ai/iroh.git?rev=7f9356ce58cd9b24dffdce3c8c04d4dbff4cc036#7f9356ce58cd9b24dffdce3c8c04d4dbff4cc036"
+source = "git+https://github.com/manaflow-ai/iroh.git?rev=6b2c35ba9209dee17ef20b939804971ab71b938d#6b2c35ba9209dee17ef20b939804971ab71b938d"
 dependencies = [
  "arc-swap",
  "cfg_aliases",
@@ -1879,7 +1879,7 @@ dependencies = [
 [[package]]
 name = "iroh-relay"
 version = "1.0.2"
-source = "git+https://github.com/manaflow-ai/iroh.git?rev=7f9356ce58cd9b24dffdce3c8c04d4dbff4cc036#7f9356ce58cd9b24dffdce3c8c04d4dbff4cc036"
+source = "git+https://github.com/manaflow-ai/iroh.git?rev=6b2c35ba9209dee17ef20b939804971ab71b938d#6b2c35ba9209dee17ef20b939804971ab71b938d"
 dependencies = [
  "blake3",
  "bytes",
@@ -2500,7 +2500,7 @@ dependencies = [
 [[package]]
 name = "noq"
 version = "1.0.1"
-source = "git+https://github.com/manaflow-ai/noq.git?rev=4ec0ede1df583b51a0ab80a052fd1536b210109a#4ec0ede1df583b51a0ab80a052fd1536b210109a"
+source = "git+https://github.com/manaflow-ai/noq.git?rev=2271bbc25890f9577d2ce9bd0bb0f872af32e105#2271bbc25890f9577d2ce9bd0bb0f872af32e105"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2521,7 +2521,7 @@ dependencies = [
 [[package]]
 name = "noq-proto"
 version = "1.0.1"
-source = "git+https://github.com/manaflow-ai/noq.git?rev=4ec0ede1df583b51a0ab80a052fd1536b210109a#4ec0ede1df583b51a0ab80a052fd1536b210109a"
+source = "git+https://github.com/manaflow-ai/noq.git?rev=2271bbc25890f9577d2ce9bd0bb0f872af32e105#2271bbc25890f9577d2ce9bd0bb0f872af32e105"
 dependencies = [
  "aes-gcm",
  "bytes",
@@ -2547,7 +2547,7 @@ dependencies = [
 [[package]]
 name = "noq-udp"
 version = "1.0.1"
-source = "git+https://github.com/manaflow-ai/noq.git?rev=4ec0ede1df583b51a0ab80a052fd1536b210109a#4ec0ede1df583b51a0ab80a052fd1536b210109a"
+source = "git+https://github.com/manaflow-ai/noq.git?rev=2271bbc25890f9577d2ce9bd0bb0f872af32e105#2271bbc25890f9577d2ce9bd0bb0f872af32e105"
 dependencies = [
  "cfg_aliases",
  "libc",
