@@ -33,8 +33,10 @@ jobs:
   create-release:
     name: create-release
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
+      attestations: read
     outputs:
       release_version: ${{ env.RELEASE_VERSION }}
     steps:
@@ -45,7 +47,7 @@ jobs:
         echo "RELEASE_VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
         echo "version is: ${GITHUB_REF#refs/tags/}"
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       with:
         fetch-depth: 1
     - name: Promote draft release (or create fresh)
@@ -54,8 +56,26 @@ jobs:
         TAG: ${{ env.RELEASE_VERSION }}
       shell: bash
       run: |
-        set -eu
+        set -euo pipefail
         if gh release view "$TAG" --json isDraft -q .isDraft 2>/dev/null | grep -q true; then
+          if [ "${GITHUB_REPOSITORY}" = "manaflow-ai/iroh-ffi" ]; then
+            case "$TAG" in
+              v*-cmux.*) ;;
+              *) echo "ERROR: fork releases require a cmux-only tag" >&2; exit 1 ;;
+            esac
+            asset_dir=$(mktemp -d)
+            trap 'rm -rf "$asset_dir"' EXIT
+            gh release download "$TAG" \
+              --pattern IrohLib.xcframework.zip \
+              --dir "$asset_dir"
+            asset="$asset_dir/IrohLib.xcframework.zip"
+            test -s "$asset"
+            gh attestation verify "$asset" --repo "$GITHUB_REPOSITORY"
+            checksum=$(sha256sum "$asset" | cut -d' ' -f1)
+            grep -Fq "let releaseRepository = \"manaflow-ai/iroh-ffi\"" Package.swift
+            grep -Fq "let releaseTag = \"$TAG\"" Package.swift
+            grep -Fq "let releaseChecksum = \"$checksum\"" Package.swift
+          fi
           echo "Promoting existing draft $TAG to published"
           gh release edit "$TAG" --draft=false
         elif gh release view "$TAG" >/dev/null 2>&1; then
