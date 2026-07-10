@@ -69,9 +69,9 @@ checksum = "940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000"
 
 [[package]]
 name = "anyhow"
-version = "1.0.102"
+version = "1.0.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
+checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
 name = "arc-swap"
@@ -1732,7 +1732,7 @@ dependencies = [
 [[package]]
 name = "iroh"
 version = "1.0.2"
-source = "git+https://github.com/manaflow-ai/iroh.git?rev=0daf0357c717df31c0745fb9cc8dd931324382e6#0daf0357c717df31c0745fb9cc8dd931324382e6"
+source = "git+https://github.com/manaflow-ai/iroh.git?rev=7f9356ce58cd9b24dffdce3c8c04d4dbff4cc036#7f9356ce58cd9b24dffdce3c8c04d4dbff4cc036"
 dependencies = [
  "backon",
  "blake3",
@@ -1782,7 +1782,7 @@ dependencies = [
 [[package]]
 name = "iroh-base"
 version = "1.0.2"
-source = "git+https://github.com/manaflow-ai/iroh.git?rev=0daf0357c717df31c0745fb9cc8dd931324382e6#0daf0357c717df31c0745fb9cc8dd931324382e6"
+source = "git+https://github.com/manaflow-ai/iroh.git?rev=7f9356ce58cd9b24dffdce3c8c04d4dbff4cc036#7f9356ce58cd9b24dffdce3c8c04d4dbff4cc036"
 dependencies = [
  "curve25519-dalek",
  "data-encoding",
@@ -1800,7 +1800,7 @@ dependencies = [
 [[package]]
 name = "iroh-dns"
 version = "1.0.2"
-source = "git+https://github.com/manaflow-ai/iroh.git?rev=0daf0357c717df31c0745fb9cc8dd931324382e6#0daf0357c717df31c0745fb9cc8dd931324382e6"
+source = "git+https://github.com/manaflow-ai/iroh.git?rev=7f9356ce58cd9b24dffdce3c8c04d4dbff4cc036#7f9356ce58cd9b24dffdce3c8c04d4dbff4cc036"
 dependencies = [
  "arc-swap",
  "cfg_aliases",
@@ -1879,7 +1879,7 @@ dependencies = [
 [[package]]
 name = "iroh-relay"
 version = "1.0.2"
-source = "git+https://github.com/manaflow-ai/iroh.git?rev=0daf0357c717df31c0745fb9cc8dd931324382e6#0daf0357c717df31c0745fb9cc8dd931324382e6"
+source = "git+https://github.com/manaflow-ai/iroh.git?rev=7f9356ce58cd9b24dffdce3c8c04d4dbff4cc036#7f9356ce58cd9b24dffdce3c8c04d4dbff4cc036"
 dependencies = [
  "blake3",
  "bytes",
@@ -2500,7 +2500,7 @@ dependencies = [
 [[package]]
 name = "noq"
 version = "1.0.1"
-source = "git+https://github.com/manaflow-ai/noq.git?rev=d8534ca45d2f00a3db06914b9f265b8f53d35d03#d8534ca45d2f00a3db06914b9f265b8f53d35d03"
+source = "git+https://github.com/manaflow-ai/noq.git?rev=4ec0ede1df583b51a0ab80a052fd1536b210109a#4ec0ede1df583b51a0ab80a052fd1536b210109a"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2521,7 +2521,7 @@ dependencies = [
 [[package]]
 name = "noq-proto"
 version = "1.0.1"
-source = "git+https://github.com/manaflow-ai/noq.git?rev=d8534ca45d2f00a3db06914b9f265b8f53d35d03#d8534ca45d2f00a3db06914b9f265b8f53d35d03"
+source = "git+https://github.com/manaflow-ai/noq.git?rev=4ec0ede1df583b51a0ab80a052fd1536b210109a#4ec0ede1df583b51a0ab80a052fd1536b210109a"
 dependencies = [
  "aes-gcm",
  "bytes",
@@ -2547,7 +2547,7 @@ dependencies = [
 [[package]]
 name = "noq-udp"
 version = "1.0.1"
-source = "git+https://github.com/manaflow-ai/noq.git?rev=d8534ca45d2f00a3db06914b9f265b8f53d35d03#d8534ca45d2f00a3db06914b9f265b8f53d35d03"
+source = "git+https://github.com/manaflow-ai/noq.git?rev=4ec0ede1df583b51a0ab80a052fd1536b210109a#4ec0ede1df583b51a0ab80a052fd1536b210109a"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -2896,9 +2896,9 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "plist"
-version = "1.9.0"
+version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "092791278e026273c1b65bbdcfbba3a300f2994c896bd01ab01da613c29c46f1"
+checksum = "7da1d65da6dd5d1e44199ac0f58712d241c0f439f80adea8924d832384087f85"
 dependencies = [
  "base64",
  "indexmap",
@@ -3038,9 +3038,9 @@ dependencies = [
 
 [[package]]
 name = "quick-xml"
-version = "0.39.4"
+version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cdcc8dd4e2f670d309a5f0e83fe36dfdc05af317008fea29144da1a2ac858e5e"
+checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
 dependencies = [
  "memchr",
 ]
