@@ -1,7 +1,52 @@
+import Darwin
 import XCTest
 @testable import IrohLib
 
 private let ALPN = Data("iroh-ffi/test/0".utf8)
+
+final class AppleBackDeploymentTests: XCTestCase {
+    func testNetworkPathShimIsLinkedAndForwardsWhenAvailable() throws {
+        let symbolName = "nw_path_is_ultra_constrained"
+        let process = try XCTUnwrap(dlopen(nil, RTLD_LAZY))
+        defer { dlclose(process) }
+        let shim = try XCTUnwrap(
+            dlsym(process, symbolName),
+            "the compatibility definition must survive static linking"
+        )
+
+        let networkFramework = try XCTUnwrap(
+            dlopen(
+                "/System/Library/Frameworks/Network.framework/Network",
+                RTLD_LAZY | RTLD_LOCAL | RTLD_FIRST
+            )
+        )
+        defer { dlclose(networkFramework) }
+        let systemImplementation = dlsym(networkFramework, symbolName)
+
+        var symbolInfo = Dl_info()
+        XCTAssertNotEqual(dladdr(shim, &symbolInfo), 0)
+        let definingImage = String(cString: try XCTUnwrap(symbolInfo.dli_fname))
+
+        if #available(macOS 26.0, iOS 26.0, *) {
+            let systemImplementation = try XCTUnwrap(
+                systemImplementation,
+                "OS 26 and newer must provide the Network.framework implementation"
+            )
+            XCTAssertEqual(
+                UInt(bitPattern: shim),
+                UInt(bitPattern: systemImplementation),
+                "Network.framework's strong definition must replace the weak fallback"
+            )
+            XCTAssertTrue(definingImage.contains("Network.framework"), definingImage)
+        } else {
+            XCTAssertNil(
+                systemImplementation,
+                "older systems must use the compatibility definition's false fallback"
+            )
+            XCTAssertFalse(definingImage.contains("Network.framework"), definingImage)
+        }
+    }
+}
 
 final class KeyTests: XCTestCase {
     func testEndpointId() throws {
@@ -167,7 +212,7 @@ final class EndpointTests: XCTestCase {
         let serverId = server.id()
 
         let serverTask = Task {
-            let incoming = try await server.acceptNext()!
+            let incoming = await server.acceptNext()!
             let conn = try await incoming.accept().connect()
             XCTAssertEqual(conn.alpn(), ALPN)
             let bi = try await conn.acceptBi()
@@ -216,7 +261,7 @@ final class EndpointTests: XCTestCase {
         let serverAddr = server.addr()
 
         let serverTask = Task {
-            let incoming = try await server.acceptNext()!
+            let incoming = await server.acceptNext()!
             let conn = try await incoming.accept().connect()
             let recv = try await conn.acceptUni()
             let msg = try await recv.readToEnd(sizeLimit: 32)

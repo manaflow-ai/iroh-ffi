@@ -17,6 +17,7 @@ env:
 
 jobs:
   python:
+    if: github.repository == 'n0-computer/iroh-ffi'
     name: Python - Build and test
     timeout-minutes: 30
     runs-on: [self-hosted, linux, X64]

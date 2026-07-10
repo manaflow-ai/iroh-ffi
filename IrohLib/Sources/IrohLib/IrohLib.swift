@@ -2708,14 +2708,10 @@ public protocol EndpointBuilderProtocol: AnyObject, Sendable {
     /**
      * Consume the builder and bind a new [`Endpoint`].
      *
-     * Returns an `Endpoint` without protocol handlers attached. To attach
-     * protocol handlers, use [`Endpoint::bind`] with
-     * [`EndpointOptions::protocols`] instead — the builder form here is
-     * for callers who don't need custom protocols.
-     *
-     * The builder is single-use: a second call to `bind` (or to any other
-     * `take_inner`-using method like `bind_addr`) on the same instance
-     * returns `EndpointBuilder already consumed`.
+     * The returned `Endpoint` has no protocol handlers — use
+     * [`Endpoint::bind`] with [`EndpointOptions::protocols`] to attach them.
+     * The builder is single-use; a second `bind` returns
+     * `EndpointBuilder already consumed`.
      */
     func bind() async throws  -> Endpoint
     
@@ -2784,15 +2780,9 @@ open class EndpointBuilder: EndpointBuilderProtocol, @unchecked Sendable {
         return try! rustCall { uniffi_iroh_ffi_fn_clone_endpointbuilder(self.handle, $0) }
     }
     /**
-     * Create a fresh empty endpoint builder.
-     *
-     * Apply a preset (`apply_n0`, `apply_minimal`, `apply_n0_disable_relay`)
-     * before [`bind`](Self::bind) — the preset installs the crypto provider
-     * and other required configuration; without one, `bind` will error.
-     *
-     * For the simple `Endpoint::bind(options)` path use that constructor
-     * instead; this builder API is for callers who want to apply
-     * configuration incrementally.
+     * Create a fresh empty endpoint builder. Apply a preset (`apply_n0`,
+     * `apply_minimal`, `apply_n0_disable_relay`) before [`bind`](Self::bind);
+     * the preset installs the crypto provider, without one `bind` will error.
      */
 public convenience init() {
     let handle =
@@ -2859,14 +2849,10 @@ open func applyN0DisableRelay()  {try! rustCall() {
     /**
      * Consume the builder and bind a new [`Endpoint`].
      *
-     * Returns an `Endpoint` without protocol handlers attached. To attach
-     * protocol handlers, use [`Endpoint::bind`] with
-     * [`EndpointOptions::protocols`] instead — the builder form here is
-     * for callers who don't need custom protocols.
-     *
-     * The builder is single-use: a second call to `bind` (or to any other
-     * `take_inner`-using method like `bind_addr`) on the same instance
-     * returns `EndpointBuilder already consumed`.
+     * The returned `Endpoint` has no protocol handlers — use
+     * [`Endpoint::bind`] with [`EndpointOptions::protocols`] to attach them.
+     * The builder is single-use; a second `bind` returns
+     * `EndpointBuilder already consumed`.
      */
 open func bind()async throws  -> Endpoint  {
     return
@@ -9443,7 +9429,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_iroh_ffi_checksum_method_endpointbuilder_apply_n0_disable_relay() != 20494) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_iroh_ffi_checksum_method_endpointbuilder_bind() != 18280) {
+    if (uniffi_iroh_ffi_checksum_method_endpointbuilder_bind() != 5850) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_iroh_ffi_checksum_method_endpointbuilder_bind_addr() != 50528) {
@@ -9608,7 +9594,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_iroh_ffi_checksum_constructor_endpoint_bind() != 33964) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_iroh_ffi_checksum_constructor_endpointbuilder_new() != 38003) {
+    if (uniffi_iroh_ffi_checksum_constructor_endpointbuilder_new() != 16347) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_iroh_ffi_checksum_constructor_endpointid_from_bytes() != 63462) {

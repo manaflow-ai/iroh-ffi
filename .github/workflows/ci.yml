@@ -29,11 +29,11 @@ jobs:
         name: [ubuntu-latest, macOS-arm-latest, windows-latest]
         include:
           - name: ubuntu-latest
-            runner: [self-hosted, linux, X64]
+            runner: ubuntu-latest
           - name: macOS-arm-latest
-            runner: [self-hosted, macOS, ARM64]
+            runner: macos-14
           - name: windows-latest
-            runner: [windows-latest]
+            runner: windows-latest
     steps:
       - uses: actions/checkout@master
         with:

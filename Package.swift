@@ -19,20 +19,25 @@ import Foundation
 // to the release zip. Set IROH_FORCE_REMOTE_XCFRAMEWORK to force the release
 // zip even in a built checkout.
 //
-// `releaseTag` is rewritten locally by `cargo make prepare-release <V>`.
-// `releaseChecksum` is rewritten on PR CI by `release_swift.yml` (one bot
-// commit on the release branch, marked `[skip swift-release]`), so the value
-// here always matches the IrohLib.xcframework.zip attached to the GitHub
-// release — never a cross-host determinism game.
+// The fork deliberately keeps the last published artifact selected until its
+// first fork asset exists. `cargo make prepare-swift-fork-release <V>` changes
+// both repository and tag on an isolated release branch. CI then bakes the
+// asset checksum there; that commit is tagged and published before it is
+// merged, so the default branch never names a missing or draft-only asset.
+let releaseRepository = "n0-computer/iroh-ffi"
 let releaseTag = "v1.0.0"
 let releaseChecksum = "514b147f7965fe17acaece9a1157cf9421463b6c9282224983e871ea868b86ef"
 
 let packageDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-let localBuiltBinary = packageDir
-    .appendingPathComponent("Iroh.xcframework/macos-arm64/libiroh_ffi.a")
+let localBuiltBinaries = [
+    "Iroh.xcframework/macos-arm64_x86_64/libiroh_ffi.a",
+    "Iroh.xcframework/macos-x86_64_arm64/libiroh_ffi.a",
+    // Continue recognizing locally built artifacts from before Intel support.
+    "Iroh.xcframework/macos-arm64/libiroh_ffi.a",
+].map { packageDir.appendingPathComponent($0) }
 let forceRemote = ProcessInfo.processInfo.environment["IROH_FORCE_REMOTE_XCFRAMEWORK"] != nil
 let useLocalXcframework = !forceRemote
-    && FileManager.default.fileExists(atPath: localBuiltBinary.path)
+    && localBuiltBinaries.contains { FileManager.default.fileExists(atPath: $0.path) }
 
 let irohBinary: Target = useLocalXcframework
     ? .binaryTarget(
@@ -40,14 +45,14 @@ let irohBinary: Target = useLocalXcframework
         path: "Iroh.xcframework")
     : .binaryTarget(
         name: "Iroh",
-        url: "https://github.com/n0-computer/iroh-ffi/releases/download/\(releaseTag)/IrohLib.xcframework.zip",
+        url: "https://github.com/\(releaseRepository)/releases/download/\(releaseTag)/IrohLib.xcframework.zip",
         checksum: releaseChecksum)
 
 let package = Package(
     name: "IrohLib",
     platforms: [
         .iOS("17.5"),
-        .macOS("14.5")
+        .macOS("14.0")
     ],
     products: [
         .library(
