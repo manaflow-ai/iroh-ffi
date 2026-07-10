@@ -52,6 +52,30 @@ impl EndpointBuilder {
         self.map(move |builder| builder.portmapper_config(config));
     }
 
+    fn set_defer_nat_traversal_until_authorized(&self, defer: bool) {
+        self.map(move |builder| builder.defer_nat_traversal_until_authorized(defer));
+    }
+
+    fn set_initial_incoming_stream_limits(
+        &self,
+        maximum_bidirectional: Option<u64>,
+        maximum_unidirectional: Option<u64>,
+    ) -> Result<(), IrohError> {
+        let mut config = endpoint::QuicTransportConfig::builder();
+        if let Some(count) = maximum_bidirectional {
+            config = config.max_concurrent_bidi_streams(
+                endpoint::VarInt::from_u64(count).map_err(anyhow::Error::from)?,
+            );
+        }
+        if let Some(count) = maximum_unidirectional {
+            config = config.max_concurrent_uni_streams(
+                endpoint::VarInt::from_u64(count).map_err(anyhow::Error::from)?,
+            );
+        }
+        self.map(move |builder| builder.transport_config(config.build()));
+        Ok(())
+    }
+
     pub(crate) fn take_inner(&self) -> Result<iroh::endpoint::Builder, IrohError> {
         self.inner
             .lock()
@@ -217,6 +241,21 @@ pub struct EndpointOptions {
     /// probing while retaining direct connections, hole punching, and relays.
     #[uniffi(default = None)]
     pub port_mapping_enabled: Option<bool>,
+    /// Defers local candidate advertisement, remote candidate processing, probing,
+    /// and path migration on each connection until that exact connection is
+    /// explicitly authorized. `None` preserves iroh's default (`false`).
+    #[uniffi(default = None)]
+    pub defer_nat_traversal_until_authorized: Option<bool>,
+    /// Initial peer-created bidirectional stream credit advertised in the QUIC
+    /// transport parameters. Set this to zero when admission must precede every
+    /// peer-created application stream.
+    #[uniffi(default = None)]
+    pub initial_max_concurrent_bi_streams: Option<u64>,
+    /// Initial peer-created unidirectional stream credit advertised in the QUIC
+    /// transport parameters. Set this to zero when admission must precede every
+    /// peer-created application stream.
+    #[uniffi(default = None)]
+    pub initial_max_concurrent_uni_streams: Option<u64>,
 }
 
 #[uniffi::export(with_foreign)]
@@ -409,6 +448,17 @@ impl Endpoint {
         }
         if let Some(enabled) = options.port_mapping_enabled {
             wrapper.set_port_mapping_enabled(enabled);
+        }
+        if let Some(defer) = options.defer_nat_traversal_until_authorized {
+            wrapper.set_defer_nat_traversal_until_authorized(defer);
+        }
+        if options.initial_max_concurrent_bi_streams.is_some()
+            || options.initial_max_concurrent_uni_streams.is_some()
+        {
+            wrapper.set_initial_incoming_stream_limits(
+                options.initial_max_concurrent_bi_streams,
+                options.initial_max_concurrent_uni_streams,
+            )?;
         }
 
         let builder = wrapper.take_inner()?;
@@ -676,6 +726,18 @@ impl From<endpoint::Connection> for Connection {
 
 #[uniffi::export]
 impl Connection {
+    /// Authorizes NAT traversal for this exact live connection.
+    ///
+    /// This call is one-way and idempotent. It has an effect only when the
+    /// endpoint was bound with deferred NAT traversal enabled. cmux authorizes
+    /// the client connection first, then authorizes the server connection only
+    /// after receiving the client's final application-level admission ACK.
+    #[uniffi::method(async_runtime = "tokio")]
+    pub async fn authorize_nat_traversal(&self) -> Result<(), IrohError> {
+        self.0.authorize_nat_traversal().await?;
+        Ok(())
+    }
+
     /// The ALPN protocol negotiated for this connection.
     pub fn alpn(&self) -> Vec<u8> {
         self.0.alpn().to_vec()
@@ -1196,6 +1258,144 @@ mod tests {
         let ep = Endpoint::bind(options).await.unwrap();
         assert!(!ep.bound_sockets().is_empty(), "should have bound sockets");
         ep.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_zero_initial_stream_credit_blocks_only_the_matching_live_connection() {
+        let defaults = EndpointOptions::default();
+        assert_eq!(defaults.initial_max_concurrent_bi_streams, None);
+        assert_eq!(defaults.initial_max_concurrent_uni_streams, None);
+
+        let server = Endpoint::bind(EndpointOptions {
+            preset: Some(crate::preset_minimal()),
+            alpns: Some(vec![TEST_ALPN.to_vec()]),
+            initial_max_concurrent_bi_streams: Some(0),
+            initial_max_concurrent_uni_streams: Some(0),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let server_addr = server.addr();
+
+        let client_a = Endpoint::bind(EndpointOptions {
+            preset: Some(crate::preset_minimal()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let server_accept_a = {
+            let server = server.clone();
+            tokio::spawn(async move {
+                server
+                    .accept_next()
+                    .await
+                    .expect("client A incoming")
+                    .accept()
+                    .await
+                    .unwrap()
+                    .connect()
+                    .await
+                    .unwrap()
+            })
+        };
+        let client_connection_a = client_a.connect(&server_addr, TEST_ALPN).await.unwrap();
+        let server_connection_a = server_accept_a.await.unwrap();
+
+        let client_b = Endpoint::bind(EndpointOptions {
+            preset: Some(crate::preset_minimal()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let server_accept_b = {
+            let server = server.clone();
+            tokio::spawn(async move {
+                server
+                    .accept_next()
+                    .await
+                    .expect("client B incoming")
+                    .accept()
+                    .await
+                    .unwrap()
+                    .connect()
+                    .await
+                    .unwrap()
+            })
+        };
+        let client_connection_b = client_b.connect(&server_addr, TEST_ALPN).await.unwrap();
+        let server_connection_b = server_accept_b.await.unwrap();
+
+        assert_eq!(server_connection_a.remote_id(), client_a.id());
+        assert_eq!(server_connection_b.remote_id(), client_b.id());
+        let client_connection_a_id = client_connection_a.stable_id();
+        let server_connection_a_id = server_connection_a.stable_id();
+
+        let mut client_a_bi = Box::pin(client_connection_a.open_bi());
+        let mut client_a_uni = Box::pin(client_connection_a.open_uni());
+        let mut client_b_bi = Box::pin(client_connection_b.open_bi());
+        let mut client_b_uni = Box::pin(client_connection_b.open_uni());
+
+        for blocked in [
+            tokio::time::timeout(Duration::from_millis(100), client_a_bi.as_mut())
+                .await
+                .is_err(),
+            tokio::time::timeout(Duration::from_millis(100), client_a_uni.as_mut())
+                .await
+                .is_err(),
+            tokio::time::timeout(Duration::from_millis(100), client_b_bi.as_mut())
+                .await
+                .is_err(),
+            tokio::time::timeout(Duration::from_millis(100), client_b_uni.as_mut())
+                .await
+                .is_err(),
+        ] {
+            assert!(blocked, "zero initial stream credit must block peer opens");
+        }
+
+        server_connection_a
+            .set_max_concurrent_bi_streams(1)
+            .unwrap();
+        let _client_a_bi = tokio::time::timeout(Duration::from_secs(1), client_a_bi.as_mut())
+            .await
+            .expect("client A bidirectional stream stayed blocked after credit")
+            .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), client_a_uni.as_mut())
+                .await
+                .is_err(),
+            "bidirectional credit must not unblock a unidirectional stream"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), client_b_bi.as_mut())
+                .await
+                .is_err(),
+            "credit on connection A must not unblock connection B"
+        );
+
+        server_connection_a
+            .set_max_concurrent_uni_streams(1)
+            .unwrap();
+        let _client_a_uni = tokio::time::timeout(Duration::from_secs(1), client_a_uni.as_mut())
+            .await
+            .expect("client A unidirectional stream stayed blocked after credit")
+            .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), client_b_uni.as_mut())
+                .await
+                .is_err(),
+            "credit on connection A must not unblock connection B"
+        );
+
+        assert_eq!(client_connection_a.stable_id(), client_connection_a_id);
+        assert_eq!(server_connection_a.stable_id(), server_connection_a_id);
+
+        drop(client_b_bi);
+        drop(client_b_uni);
+        client_connection_a.close(0, b"done").unwrap();
+        client_connection_b.close(0, b"done").unwrap();
+        client_a.close().await.unwrap();
+        client_b.close().await.unwrap();
+        server.close().await.unwrap();
     }
 
     #[tokio::test]

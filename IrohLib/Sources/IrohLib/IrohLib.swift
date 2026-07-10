@@ -1481,6 +1481,16 @@ public protocol ConnectionProtocol: AnyObject, Sendable {
     func alpn()  -> Data
     
     /**
+     * Authorizes NAT traversal for this exact live connection.
+     *
+     * This call is one-way and idempotent. It has an effect only when the
+     * endpoint was bound with deferred NAT traversal enabled. cmux authorizes
+     * the client connection first, then authorizes the server connection only
+     * after receiving the client's final application-level admission ACK.
+     */
+    func authorizeNatTraversal() async throws 
+    
+    /**
      * Close the connection immediately with the given application error code.
      *
      * Signed for Kotlin/Swift ergonomics; negative values are rejected.
@@ -1697,6 +1707,31 @@ open func alpn() -> Data  {
             self.uniffiCloneHandle(),$0
     )
 })
+}
+    
+    /**
+     * Authorizes NAT traversal for this exact live connection.
+     *
+     * This call is one-way and idempotent. It has an effect only when the
+     * endpoint was bound with deferred NAT traversal enabled. cmux authorizes
+     * the client connection first, then authorizes the server connection only
+     * after receiving the client's final application-level admission ACK.
+     */
+open func authorizeNatTraversal()async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_iroh_ffi_fn_method_connection_authorize_nat_traversal(
+                    self.uniffiCloneHandle()
+                    
+                )
+            },
+            pollFunc: ffi_iroh_ffi_rust_future_poll_void,
+            completeFunc: ffi_iroh_ffi_rust_future_complete_void,
+            freeFunc: ffi_iroh_ffi_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeIrohError__as_error_lift
+        )
 }
     
     /**
@@ -7753,6 +7788,24 @@ public struct EndpointOptions {
      * probing while retaining direct connections, hole punching, and relays.
      */
     public var portMappingEnabled: Bool?
+    /**
+     * Defers local candidate advertisement, remote candidate processing, probing,
+     * and path migration on each connection until that exact connection is
+     * explicitly authorized. `None` preserves iroh's default (`false`).
+     */
+    public var deferNatTraversalUntilAuthorized: Bool?
+    /**
+     * Initial peer-created bidirectional stream credit advertised in the QUIC
+     * transport parameters. Set this to zero when admission must precede every
+     * peer-created application stream.
+     */
+    public var initialMaxConcurrentBiStreams: UInt64?
+    /**
+     * Initial peer-created unidirectional stream credit advertised in the QUIC
+     * transport parameters. Set this to zero when admission must precede every
+     * peer-created application stream.
+     */
+    public var initialMaxConcurrentUniStreams: UInt64?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -7786,7 +7839,22 @@ public struct EndpointOptions {
          * Override UPnP, PCP, and NAT-PMP gateway port mapping. `None` preserves
          * the chosen preset / iroh default; `Some(false)` skips SSDP and gateway
          * probing while retaining direct connections, hole punching, and relays.
-         */portMappingEnabled: Bool? = nil) {
+         */portMappingEnabled: Bool? = nil, 
+        /**
+         * Defers local candidate advertisement, remote candidate processing, probing,
+         * and path migration on each connection until that exact connection is
+         * explicitly authorized. `None` preserves iroh's default (`false`).
+         */deferNatTraversalUntilAuthorized: Bool? = nil, 
+        /**
+         * Initial peer-created bidirectional stream credit advertised in the QUIC
+         * transport parameters. Set this to zero when admission must precede every
+         * peer-created application stream.
+         */initialMaxConcurrentBiStreams: UInt64? = nil, 
+        /**
+         * Initial peer-created unidirectional stream credit advertised in the QUIC
+         * transport parameters. Set this to zero when admission must precede every
+         * peer-created application stream.
+         */initialMaxConcurrentUniStreams: UInt64? = nil) {
         self.preset = preset
         self.bindAddr = bindAddr
         self.secretKey = secretKey
@@ -7794,6 +7862,9 @@ public struct EndpointOptions {
         self.relayMode = relayMode
         self.protocols = protocols
         self.portMappingEnabled = portMappingEnabled
+        self.deferNatTraversalUntilAuthorized = deferNatTraversalUntilAuthorized
+        self.initialMaxConcurrentBiStreams = initialMaxConcurrentBiStreams
+        self.initialMaxConcurrentUniStreams = initialMaxConcurrentUniStreams
     }
 
     
@@ -7818,7 +7889,10 @@ public struct FfiConverterTypeEndpointOptions: FfiConverterRustBuffer {
                 alpns: FfiConverterOptionSequenceData.read(from: &buf), 
                 relayMode: FfiConverterOptionTypeRelayMode.read(from: &buf), 
                 protocols: FfiConverterOptionDictionaryDataTypeProtocolCreator.read(from: &buf), 
-                portMappingEnabled: FfiConverterOptionBool.read(from: &buf)
+                portMappingEnabled: FfiConverterOptionBool.read(from: &buf), 
+                deferNatTraversalUntilAuthorized: FfiConverterOptionBool.read(from: &buf), 
+                initialMaxConcurrentBiStreams: FfiConverterOptionUInt64.read(from: &buf), 
+                initialMaxConcurrentUniStreams: FfiConverterOptionUInt64.read(from: &buf)
         )
     }
 
@@ -7830,6 +7904,9 @@ public struct FfiConverterTypeEndpointOptions: FfiConverterRustBuffer {
         FfiConverterOptionTypeRelayMode.write(value.relayMode, into: &buf)
         FfiConverterOptionDictionaryDataTypeProtocolCreator.write(value.protocols, into: &buf)
         FfiConverterOptionBool.write(value.portMappingEnabled, into: &buf)
+        FfiConverterOptionBool.write(value.deferNatTraversalUntilAuthorized, into: &buf)
+        FfiConverterOptionUInt64.write(value.initialMaxConcurrentBiStreams, into: &buf)
+        FfiConverterOptionUInt64.write(value.initialMaxConcurrentUniStreams, into: &buf)
     }
 }
 
@@ -9516,6 +9593,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_iroh_ffi_checksum_method_connection_alpn() != 24307) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_iroh_ffi_checksum_method_connection_authorize_nat_traversal() != 45042) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_iroh_ffi_checksum_method_connection_close() != 4437) {
