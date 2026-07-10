@@ -1732,8 +1732,7 @@ dependencies = [
 [[package]]
 name = "iroh"
 version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6435544bb3a5c4e6ff7affaa0c0aa0d1bca45bd700226329d5059d3eb54f9dff"
+source = "git+https://github.com/manaflow-ai/iroh.git?rev=726cef36b80ea5503944aed96ab1a23e4d6c97af#726cef36b80ea5503944aed96ab1a23e4d6c97af"
 dependencies = [
  "backon",
  "blake3",
@@ -1783,8 +1782,7 @@ dependencies = [
 [[package]]
 name = "iroh-base"
 version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9c95e4459d9bb828a77084277abd308aa2b58a096652b079bddfd6ef2361f53"
+source = "git+https://github.com/manaflow-ai/iroh.git?rev=726cef36b80ea5503944aed96ab1a23e4d6c97af#726cef36b80ea5503944aed96ab1a23e4d6c97af"
 dependencies = [
  "curve25519-dalek",
  "data-encoding",
@@ -1802,8 +1800,7 @@ dependencies = [
 [[package]]
 name = "iroh-dns"
 version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "754f7e0c1f67938e1d671007264ffef158f14a9f795a7cc219ea68ea09a9d4c9"
+source = "git+https://github.com/manaflow-ai/iroh.git?rev=726cef36b80ea5503944aed96ab1a23e4d6c97af#726cef36b80ea5503944aed96ab1a23e4d6c97af"
 dependencies = [
  "arc-swap",
  "cfg_aliases",
@@ -1882,8 +1879,7 @@ dependencies = [
 [[package]]
 name = "iroh-relay"
 version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c12e48fef252fd04f8e6b6a8802b377baf72548d62ae4838816624cd0e06b79"
+source = "git+https://github.com/manaflow-ai/iroh.git?rev=726cef36b80ea5503944aed96ab1a23e4d6c97af#726cef36b80ea5503944aed96ab1a23e4d6c97af"
 dependencies = [
  "blake3",
  "bytes",
