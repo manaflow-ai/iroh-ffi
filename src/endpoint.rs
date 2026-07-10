@@ -1,10 +1,11 @@
-use std::{collections::HashMap, fmt::Debug, str::FromStr, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, future::Future, str::FromStr, sync::Arc};
 
 use iroh::{
     endpoint::{self, presets, presets::Preset as _},
     protocol::AcceptError,
 };
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     AddrChangeCallback, CallbackError, Connecting, EndpointAddr, EndpointId, HomeRelayCallback,
@@ -276,6 +277,73 @@ pub struct Endpoint {
     router: Option<iroh::protocol::Router>,
 }
 
+const CONNECT_CANCELLED_MESSAGE: &str = "outgoing connection cancelled";
+
+async fn await_outgoing_connect<T, F>(
+    cancellation: &CancellationToken,
+    operation: F,
+) -> Result<T, IrohError>
+where
+    F: Future<Output = Result<T, IrohError>>,
+{
+    tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => {
+            Err(anyhow::anyhow!(CONNECT_CANCELLED_MESSAGE).into())
+        }
+        result = operation => result,
+    }
+}
+
+/// A cancellable outgoing connection attempt.
+///
+/// Creation is synchronous and performs no network work. [`Self::connect`]
+/// covers both iroh address lookup and the QUIC handshake with one
+/// cancellation token. Calling [`Self::cancel`] more than once is safe, and
+/// dropping the final handle also cancels the token.
+#[derive(uniffi::Object)]
+pub struct ConnectAttempt {
+    endpoint: endpoint::Endpoint,
+    addr: iroh::EndpointAddr,
+    alpn: Vec<u8>,
+    cancellation: CancellationToken,
+}
+
+impl ConnectAttempt {
+    fn new(endpoint: endpoint::Endpoint, addr: iroh::EndpointAddr, alpn: Vec<u8>) -> Self {
+        Self {
+            endpoint,
+            addr,
+            alpn,
+            cancellation: CancellationToken::new(),
+        }
+    }
+}
+
+#[uniffi::export]
+impl ConnectAttempt {
+    /// Run address lookup and the QUIC handshake, unless cancelled first.
+    #[uniffi::method(async_runtime = "tokio")]
+    pub async fn connect(&self) -> Result<Connection, IrohError> {
+        await_outgoing_connect(&self.cancellation, async {
+            let connection = self.endpoint.connect(self.addr.clone(), &self.alpn).await?;
+            Ok(Connection(connection))
+        })
+        .await
+    }
+
+    /// Cancel this attempt. This operation is synchronous and idempotent.
+    pub fn cancel(&self) {
+        self.cancellation.cancel();
+    }
+}
+
+impl Drop for ConnectAttempt {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+    }
+}
+
 impl Endpoint {
     pub fn new(ep: endpoint::Endpoint) -> Self {
         Endpoint {
@@ -385,9 +453,22 @@ impl Endpoint {
     /// Connect to a remote endpoint via the given ALPN.
     #[uniffi::method(async_runtime = "tokio")]
     pub async fn connect(&self, addr: &EndpointAddr, alpn: &[u8]) -> Result<Connection, IrohError> {
+        self.begin_connect(addr, alpn)?.connect().await
+    }
+
+    /// Create a cancellable outgoing connection attempt without starting any
+    /// address lookup or network I/O.
+    pub fn begin_connect(
+        &self,
+        addr: &EndpointAddr,
+        alpn: &[u8],
+    ) -> Result<Arc<ConnectAttempt>, IrohError> {
         let addr: iroh::EndpointAddr = addr.clone().try_into()?;
-        let conn = self.inner.connect(addr, alpn).await?;
-        Ok(Connection(conn))
+        Ok(Arc::new(ConnectAttempt::new(
+            self.inner.clone(),
+            addr,
+            alpn.to_vec(),
+        )))
     }
 
     /// Shut down the endpoint (and, if present, the protocol router).
@@ -869,7 +950,48 @@ impl RecvStream {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+        time::Duration,
+    };
+
+    use tokio::sync::oneshot;
+
     use super::*;
+
+    struct OperationGuard {
+        active: Arc<AtomicUsize>,
+        dropped: Option<oneshot::Sender<()>>,
+    }
+
+    impl OperationGuard {
+        fn new(active: Arc<AtomicUsize>, dropped: oneshot::Sender<()>) -> Self {
+            active.fetch_add(1, Ordering::SeqCst);
+            Self {
+                active,
+                dropped: Some(dropped),
+            }
+        }
+    }
+
+    impl Drop for OperationGuard {
+        fn drop(&mut self) {
+            self.active.fetch_sub(1, Ordering::SeqCst);
+            if let Some(dropped) = self.dropped.take() {
+                let _ = dropped.send(());
+            }
+        }
+    }
+
+    fn assert_connect_cancelled<T>(result: Result<T, IrohError>) {
+        match result {
+            Err(error) => assert!(
+                error.message().contains(CONNECT_CANCELLED_MESSAGE),
+                "unexpected cancellation error: {error}"
+            ),
+            Ok(_) => panic!("connection operation completed after cancellation"),
+        }
+    }
 
     /// A user-implemented [`Preset`]: minimal baseline + a custom ALPN.
     #[derive(Debug)]
@@ -930,6 +1052,112 @@ mod tests {
             Err(e) => assert!(format!("{e}").contains("already consumed")),
             Ok(_) => panic!("expected error on second bind()"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_connect_cancelled_before_lookup_never_polls_operation() {
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        let operation_polled = Arc::new(AtomicBool::new(false));
+        let operation_probe = operation_polled.clone();
+
+        let result = await_outgoing_connect(&cancellation, async move {
+            operation_probe.store(true, Ordering::SeqCst);
+            std::future::pending::<Result<(), IrohError>>().await
+        })
+        .await;
+
+        assert_connect_cancelled(result);
+        assert!(!operation_polled.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn test_connect_cancelled_during_unresolved_lookup_drops_operation() {
+        let cancellation = CancellationToken::new();
+        let task_cancellation = cancellation.clone();
+        let active = Arc::new(AtomicUsize::new(0));
+        let operation_active = active.clone();
+        let (lookup_started_tx, lookup_started_rx) = oneshot::channel();
+        let (operation_dropped_tx, operation_dropped_rx) = oneshot::channel();
+
+        let task = tokio::spawn(async move {
+            await_outgoing_connect(&task_cancellation, async move {
+                let _guard = OperationGuard::new(operation_active, operation_dropped_tx);
+                let _ = lookup_started_tx.send(());
+                std::future::pending::<Result<(), IrohError>>().await
+            })
+            .await
+        });
+
+        lookup_started_rx.await.expect("lookup phase did not start");
+        cancellation.cancel();
+        assert_connect_cancelled(task.await.expect("connect task panicked"));
+        operation_dropped_rx
+            .await
+            .expect("lookup future was not dropped");
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn test_connect_cancelled_during_handshake_leaves_no_task() {
+        let packet_sink = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let sink_addr = packet_sink.local_addr().unwrap();
+        let endpoint = Arc::new(
+            Endpoint::bind(EndpointOptions {
+                preset: Some(crate::preset_minimal()),
+                ..Default::default()
+            })
+            .await
+            .unwrap(),
+        );
+        let remote_key = crate::SecretKey::generate();
+        let remote_addr =
+            EndpointAddr::new(&remote_key.public(), None, vec![sink_addr.to_string()]);
+        let attempt = endpoint.begin_connect(&remote_addr, TEST_ALPN).unwrap();
+
+        let task_attempt = attempt.clone();
+        let task = tokio::spawn(async move { task_attempt.connect().await });
+
+        let mut packet = [0u8; 2048];
+        tokio::time::timeout(Duration::from_secs(3), packet_sink.recv_from(&mut packet))
+            .await
+            .expect("handshake did not send a packet")
+            .expect("failed to receive handshake packet");
+        attempt.cancel();
+        let result = tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .expect("cancelled handshake left a connect task running")
+            .expect("connect task panicked");
+        assert_connect_cancelled(result);
+        endpoint.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_connect_attempt_cancel_and_drop_are_idempotent() {
+        let endpoint = Endpoint::bind(EndpointOptions {
+            preset: Some(crate::preset_minimal()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let addr = endpoint.addr();
+
+        let cancelled_attempt = endpoint.begin_connect(&addr, TEST_ALPN).unwrap();
+        let cancelled_token = cancelled_attempt.cancellation.clone();
+        cancelled_attempt.cancel();
+        cancelled_attempt.cancel();
+        assert!(cancelled_token.is_cancelled());
+        assert_connect_cancelled(cancelled_attempt.connect().await);
+        drop(cancelled_attempt);
+        assert!(cancelled_token.is_cancelled());
+
+        let dropped_attempt = endpoint.begin_connect(&addr, TEST_ALPN).unwrap();
+        let dropped_token = dropped_attempt.cancellation.clone();
+        assert!(!dropped_token.is_cancelled());
+        drop(dropped_attempt);
+        assert!(dropped_token.is_cancelled());
+
+        endpoint.close().await.unwrap();
     }
 
     #[tokio::test]
