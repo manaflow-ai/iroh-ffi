@@ -83,6 +83,26 @@ private final class BlockingConnectAttempt: ConnectAttemptProtocol, @unchecked S
     }
 }
 
+private final class NoopAddrChangeCallback: AddrChangeCallback, @unchecked Sendable {
+    func onChange(addr _: EndpointAddr) async throws {}
+}
+
+private final class NoopHomeRelayCallback: HomeRelayCallback, @unchecked Sendable {
+    func onChange(relayUrls _: [String]) async throws {}
+}
+
+private final class NoopNetworkChangeCallback: NetworkChangeCallback, @unchecked Sendable {
+    func onChange() async throws {}
+}
+
+private final class NoopPathChangeCallback: PathChangeCallback, @unchecked Sendable {
+    func onChange(paths _: [PathSnapshot]) async throws {}
+}
+
+private final class NoopPathEventCallback: PathEventCallback, @unchecked Sendable {
+    func onEvent(event _: PathEvent) async throws {}
+}
+
 final class CancellableConnectTests: XCTestCase {
     func testAlreadyCancelledTaskCancelsAttemptBeforeConnectStarts() async throws {
         let ready = expectation(description: "task reached pre-connect gate")
@@ -448,6 +468,45 @@ final class EndpointTests: XCTestCase {
         try await send.finish()
 
         _ = try await serverTask.value
+        try await client.close()
+        try await server.close()
+    }
+
+    func testWatcherRegistrationDoesNotRequireCallingThreadTokioRuntime() async throws {
+        let server = try await Endpoint.bind(
+            options: EndpointOptions(
+                preset: presetN0(),
+                alpns: [ALPN],
+                relayMode: RelayMode.disabled()
+            )
+        )
+        let client = try await Endpoint.bind(
+            options: EndpointOptions(preset: presetN0(), relayMode: RelayMode.disabled())
+        )
+
+        let serverTask = Task {
+            let nextIncoming = await server.acceptNext()
+            let incoming = try XCTUnwrap(nextIncoming)
+            return try await incoming.accept().connect()
+        }
+        let clientConnection = try await client.connect(addr: server.addr(), alpn: ALPN)
+        let serverConnection = try await serverTask.value
+
+        // These generated methods are synchronous FFI calls, so the calling
+        // Swift thread has no entered Tokio runtime.
+        let handles = [
+            client.watchAddr(callback: NoopAddrChangeCallback()),
+            client.watchHomeRelay(callback: NoopHomeRelayCallback()),
+            client.watchNetworkChange(callback: NoopNetworkChangeCallback()),
+            clientConnection.watchPaths(callback: NoopPathChangeCallback()),
+            clientConnection.watchPathEvents(callback: NoopPathEventCallback()),
+        ]
+
+        for handle in handles {
+            await handle.stop()
+        }
+        try clientConnection.close(errorCode: 0, reason: Data("test complete".utf8))
+        _ = await serverConnection.closed()
         try await client.close()
         try await server.close()
     }

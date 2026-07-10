@@ -1030,6 +1030,63 @@ mod tests {
         }
     }
 
+    struct NoopAddrChangeCallback;
+
+    #[async_trait::async_trait]
+    impl AddrChangeCallback for NoopAddrChangeCallback {
+        async fn on_change(&self, _addr: Arc<EndpointAddr>) -> Result<(), CallbackError> {
+            Ok(())
+        }
+    }
+
+    struct NoopHomeRelayCallback;
+
+    #[async_trait::async_trait]
+    impl HomeRelayCallback for NoopHomeRelayCallback {
+        async fn on_change(&self, _relay_urls: Vec<String>) -> Result<(), CallbackError> {
+            Ok(())
+        }
+    }
+
+    struct NoopNetworkChangeCallback;
+
+    #[async_trait::async_trait]
+    impl NetworkChangeCallback for NoopNetworkChangeCallback {
+        async fn on_change(&self) -> Result<(), CallbackError> {
+            Ok(())
+        }
+    }
+
+    struct NoopPathChangeCallback;
+
+    #[async_trait::async_trait]
+    impl PathChangeCallback for NoopPathChangeCallback {
+        async fn on_change(&self, _paths: Vec<PathSnapshot>) -> Result<(), CallbackError> {
+            Ok(())
+        }
+    }
+
+    struct NoopPathEventCallback;
+
+    #[async_trait::async_trait]
+    impl PathEventCallback for NoopPathEventCallback {
+        async fn on_event(&self, _event: crate::PathEvent) -> Result<(), CallbackError> {
+            Ok(())
+        }
+    }
+
+    fn collect_registration(
+        name: &'static str,
+        result: std::thread::Result<Arc<WatchHandle>>,
+        handles: &mut Vec<Arc<WatchHandle>>,
+        failures: &mut Vec<&'static str>,
+    ) {
+        match result {
+            Ok(handle) => handles.push(handle),
+            Err(_) => failures.push(name),
+        }
+    }
+
     /// A user-implemented [`Preset`]: minimal baseline + a custom ALPN.
     #[derive(Debug)]
     struct CustomPreset;
@@ -1249,6 +1306,116 @@ mod tests {
             _next = ep.accept_next() => {}
         }
         ep.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_watcher_registration_without_calling_thread_runtime() {
+        let server = Arc::new(
+            Endpoint::bind(EndpointOptions {
+                preset: Some(crate::preset_n0()),
+                alpns: Some(vec![TEST_ALPN.to_vec()]),
+                relay_mode: Some(Arc::new(RelayMode::disabled())),
+                ..Default::default()
+            })
+            .await
+            .unwrap(),
+        );
+        let client = Arc::new(
+            Endpoint::bind(EndpointOptions {
+                preset: Some(crate::preset_n0()),
+                relay_mode: Some(Arc::new(RelayMode::disabled())),
+                ..Default::default()
+            })
+            .await
+            .unwrap(),
+        );
+
+        let mut handles = Vec::new();
+        let mut failures = Vec::new();
+
+        let endpoint = client.clone();
+        collect_registration(
+            "Endpoint::watch_addr",
+            std::thread::spawn(move || endpoint.watch_addr(Arc::new(NoopAddrChangeCallback)))
+                .join(),
+            &mut handles,
+            &mut failures,
+        );
+
+        let endpoint = client.clone();
+        collect_registration(
+            "Endpoint::watch_home_relay",
+            std::thread::spawn(move || endpoint.watch_home_relay(Arc::new(NoopHomeRelayCallback)))
+                .join(),
+            &mut handles,
+            &mut failures,
+        );
+
+        let endpoint = client.clone();
+        collect_registration(
+            "Endpoint::watch_network_change",
+            std::thread::spawn(move || {
+                endpoint.watch_network_change(Arc::new(NoopNetworkChangeCallback))
+            })
+            .join(),
+            &mut handles,
+            &mut failures,
+        );
+
+        let accept_server = server.clone();
+        let accept_task = tokio::spawn(async move {
+            accept_server
+                .accept_next()
+                .await
+                .expect("incoming connection")
+                .accept()
+                .await
+                .expect("accepting connection")
+                .connect()
+                .await
+                .expect("server handshake")
+        });
+        let client_connection = Arc::new(
+            client
+                .connect(&server.addr(), TEST_ALPN)
+                .await
+                .expect("client handshake"),
+        );
+        let server_connection = accept_task.await.expect("accept task panicked");
+
+        let connection = client_connection.clone();
+        collect_registration(
+            "Connection::watch_paths",
+            std::thread::spawn(move || connection.watch_paths(Arc::new(NoopPathChangeCallback)))
+                .join(),
+            &mut handles,
+            &mut failures,
+        );
+
+        let connection = client_connection.clone();
+        collect_registration(
+            "Connection::watch_path_events",
+            std::thread::spawn(move || {
+                connection.watch_path_events(Arc::new(NoopPathEventCallback))
+            })
+            .join(),
+            &mut handles,
+            &mut failures,
+        );
+
+        for handle in handles {
+            handle.stop().await;
+        }
+        client_connection.close(0, b"test complete").unwrap();
+        server_connection.closed().await;
+        client.close().await.unwrap();
+        server.close().await.unwrap();
+
+        assert!(
+            failures.is_empty(),
+            "watcher registration panicked without an entered Tokio runtime: {}",
+            failures.join(", ")
+        );
     }
 
     const TEST_ALPN: &[u8] = b"iroh-ffi/test/0";
