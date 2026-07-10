@@ -1732,7 +1732,7 @@ dependencies = [
 [[package]]
 name = "iroh"
 version = "1.0.0"
-source = "git+https://github.com/manaflow-ai/iroh.git?rev=726cef36b80ea5503944aed96ab1a23e4d6c97af#726cef36b80ea5503944aed96ab1a23e4d6c97af"
+source = "git+https://github.com/manaflow-ai/iroh.git?rev=ca47f5d729caeeeac51647efd59f43984c9738a5#ca47f5d729caeeeac51647efd59f43984c9738a5"
 dependencies = [
  "backon",
  "blake3",
@@ -1782,7 +1782,7 @@ dependencies = [
 [[package]]
 name = "iroh-base"
 version = "1.0.0"
-source = "git+https://github.com/manaflow-ai/iroh.git?rev=726cef36b80ea5503944aed96ab1a23e4d6c97af#726cef36b80ea5503944aed96ab1a23e4d6c97af"
+source = "git+https://github.com/manaflow-ai/iroh.git?rev=ca47f5d729caeeeac51647efd59f43984c9738a5#ca47f5d729caeeeac51647efd59f43984c9738a5"
 dependencies = [
  "curve25519-dalek",
  "data-encoding",
@@ -1800,7 +1800,7 @@ dependencies = [
 [[package]]
 name = "iroh-dns"
 version = "1.0.0"
-source = "git+https://github.com/manaflow-ai/iroh.git?rev=726cef36b80ea5503944aed96ab1a23e4d6c97af#726cef36b80ea5503944aed96ab1a23e4d6c97af"
+source = "git+https://github.com/manaflow-ai/iroh.git?rev=ca47f5d729caeeeac51647efd59f43984c9738a5#ca47f5d729caeeeac51647efd59f43984c9738a5"
 dependencies = [
  "arc-swap",
  "cfg_aliases",
@@ -1879,7 +1879,7 @@ dependencies = [
 [[package]]
 name = "iroh-relay"
 version = "1.0.0"
-source = "git+https://github.com/manaflow-ai/iroh.git?rev=726cef36b80ea5503944aed96ab1a23e4d6c97af#726cef36b80ea5503944aed96ab1a23e4d6c97af"
+source = "git+https://github.com/manaflow-ai/iroh.git?rev=ca47f5d729caeeeac51647efd59f43984c9738a5#ca47f5d729caeeeac51647efd59f43984c9738a5"
 dependencies = [
  "blake3",
  "bytes",
