@@ -951,10 +951,15 @@ impl RecvStream {
 #[cfg(test)]
 mod tests {
     use std::{
-        sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+        sync::{
+            Mutex as StdMutex,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        },
         time::Duration,
     };
 
+    use iroh::address_lookup::{AddressLookup, EndpointData, Error as AddressLookupError, Item};
+    use n0_future::{StreamExt, boxed::BoxStream};
     use tokio::sync::oneshot;
 
     use super::*;
@@ -980,6 +985,32 @@ mod tests {
             if let Some(dropped) = self.dropped.take() {
                 let _ = dropped.send(());
             }
+        }
+    }
+
+    #[derive(Debug)]
+    struct HangingAddressLookup {
+        active: Arc<AtomicUsize>,
+        started: StdMutex<Option<oneshot::Sender<()>>>,
+        dropped: StdMutex<Option<oneshot::Sender<()>>>,
+    }
+
+    impl AddressLookup for HangingAddressLookup {
+        fn publish(&self, _data: &EndpointData) {}
+
+        fn resolve(
+            &self,
+            _endpoint_id: iroh::EndpointId,
+        ) -> Option<BoxStream<Result<Item, AddressLookupError>>> {
+            let active = self.active.clone();
+            let started = self.started.lock().unwrap().take()?;
+            let dropped = self.dropped.lock().unwrap().take()?;
+            let lookup = async move {
+                let _guard = OperationGuard::new(active, dropped);
+                let _ = started.send(());
+                std::future::pending::<Result<Item, AddressLookupError>>().await
+            };
+            Some(n0_future::stream::once_future(lookup).boxed())
         }
     }
 
@@ -1073,29 +1104,43 @@ mod tests {
 
     #[tokio::test]
     async fn test_connect_cancelled_during_unresolved_lookup_drops_operation() {
-        let cancellation = CancellationToken::new();
-        let task_cancellation = cancellation.clone();
         let active = Arc::new(AtomicUsize::new(0));
-        let operation_active = active.clone();
         let (lookup_started_tx, lookup_started_rx) = oneshot::channel();
         let (operation_dropped_tx, operation_dropped_rx) = oneshot::channel();
-
-        let task = tokio::spawn(async move {
-            await_outgoing_connect(&task_cancellation, async move {
-                let _guard = OperationGuard::new(operation_active, operation_dropped_tx);
-                let _ = lookup_started_tx.send(());
-                std::future::pending::<Result<(), IrohError>>().await
-            })
+        let lookup = HangingAddressLookup {
+            active: active.clone(),
+            started: StdMutex::new(Some(lookup_started_tx)),
+            dropped: StdMutex::new(Some(operation_dropped_tx)),
+        };
+        let inner = iroh::Endpoint::builder(presets::Minimal)
+            .address_lookup(lookup)
+            .bind()
             .await
-        });
+            .unwrap();
+        let endpoint = Arc::new(Endpoint::new(inner));
+        let remote_key = crate::SecretKey::generate();
+        let remote_addr = EndpointAddr::new(&remote_key.public(), None, Vec::new());
+        let attempt = endpoint.begin_connect(&remote_addr, TEST_ALPN).unwrap();
 
-        lookup_started_rx.await.expect("lookup phase did not start");
-        cancellation.cancel();
-        assert_connect_cancelled(task.await.expect("connect task panicked"));
-        operation_dropped_rx
+        let task_attempt = attempt.clone();
+        let task = tokio::spawn(async move { task_attempt.connect().await });
+
+        tokio::time::timeout(Duration::from_secs(3), lookup_started_rx)
             .await
+            .expect("lookup phase timed out")
+            .expect("lookup phase did not start");
+        attempt.cancel();
+        let result = tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .expect("cancelled lookup did not finish")
+            .expect("connect task panicked");
+        assert_connect_cancelled(result);
+        tokio::time::timeout(Duration::from_secs(1), operation_dropped_rx)
+            .await
+            .expect("lookup drop timed out")
             .expect("lookup future was not dropped");
         assert_eq!(active.load(Ordering::SeqCst), 0);
+        endpoint.close().await.unwrap();
     }
 
     #[tokio::test]
