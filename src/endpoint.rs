@@ -275,6 +275,10 @@ pub struct ConnectionStats {
 pub struct Endpoint {
     inner: endpoint::Endpoint,
     router: Option<iroh::protocol::Router>,
+    /// Runtime entered by the async FFI constructor. Synchronous watcher
+    /// registration may run on an arbitrary foreign thread, so it must spawn
+    /// through this handle rather than ambient Tokio thread-local state.
+    runtime: tokio::runtime::Handle,
 }
 
 const CONNECT_CANCELLED_MESSAGE: &str = "outgoing connection cancelled";
@@ -307,15 +311,22 @@ pub struct ConnectAttempt {
     addr: iroh::EndpointAddr,
     alpn: Vec<u8>,
     cancellation: CancellationToken,
+    runtime: tokio::runtime::Handle,
 }
 
 impl ConnectAttempt {
-    fn new(endpoint: endpoint::Endpoint, addr: iroh::EndpointAddr, alpn: Vec<u8>) -> Self {
+    fn new(
+        endpoint: endpoint::Endpoint,
+        addr: iroh::EndpointAddr,
+        alpn: Vec<u8>,
+        runtime: tokio::runtime::Handle,
+    ) -> Self {
         Self {
             endpoint,
             addr,
             alpn,
             cancellation: CancellationToken::new(),
+            runtime,
         }
     }
 }
@@ -327,7 +338,7 @@ impl ConnectAttempt {
     pub async fn connect(&self) -> Result<Connection, IrohError> {
         await_outgoing_connect(&self.cancellation, async {
             let connection = self.endpoint.connect(self.addr.clone(), &self.alpn).await?;
-            Ok(Connection(connection))
+            Ok(Connection(connection, self.runtime.clone()))
         })
         .await
     }
@@ -349,6 +360,7 @@ impl Endpoint {
         Endpoint {
             inner: ep,
             router: None,
+            runtime: tokio::runtime::Handle::current(),
         }
     }
 
@@ -384,11 +396,16 @@ impl Endpoint {
 
         let builder = wrapper.take_inner()?;
         let endpoint = builder.bind().await?;
+        let runtime = tokio::runtime::Handle::current();
 
         let router = match options.protocols {
             Some(protocols) if !protocols.is_empty() => {
                 let mut router_builder = iroh::protocol::Router::builder(endpoint.clone());
-                let endpoint_wrapper = Arc::new(Endpoint::new(endpoint.clone()));
+                let endpoint_wrapper = Arc::new(Endpoint {
+                    inner: endpoint.clone(),
+                    router: None,
+                    runtime: runtime.clone(),
+                });
                 for (alpn, creator) in protocols {
                     let handler = creator.create(endpoint_wrapper.clone());
                     router_builder = router_builder.accept(alpn, ProtocolWrapper { handler });
@@ -401,6 +418,7 @@ impl Endpoint {
         Ok(Endpoint {
             inner: endpoint,
             router,
+            runtime,
         })
     }
 
@@ -468,6 +486,7 @@ impl Endpoint {
             self.inner.clone(),
             addr,
             alpn.to_vec(),
+            self.runtime.clone(),
         )))
     }
 
@@ -589,13 +608,21 @@ impl Endpoint {
     /// [`WatchHandle`] cancels the watcher when dropped or when its `stop()`
     /// method is called.
     pub fn watch_addr(&self, callback: Arc<dyn AddrChangeCallback>) -> Arc<WatchHandle> {
-        Arc::new(watch::spawn_watch_addr(self.inner.clone(), callback))
+        Arc::new(watch::spawn_watch_addr(
+            &self.runtime,
+            self.inner.clone(),
+            callback,
+        ))
     }
 
     /// Register a callback that fires whenever the list of relays this endpoint
     /// is currently connected to changes.
     pub fn watch_home_relay(&self, callback: Arc<dyn HomeRelayCallback>) -> Arc<WatchHandle> {
-        Arc::new(watch::spawn_home_relay_watch(self.inner.clone(), callback))
+        Arc::new(watch::spawn_home_relay_watch(
+            &self.runtime,
+            self.inner.clone(),
+            callback,
+        ))
     }
 
     /// Register a callback that fires every time the underlying network stack
@@ -605,6 +632,7 @@ impl Endpoint {
         callback: Arc<dyn NetworkChangeCallback>,
     ) -> Arc<WatchHandle> {
         Arc::new(watch::spawn_network_change_watch(
+            &self.runtime,
             self.inner.clone(),
             callback,
         ))
@@ -613,11 +641,15 @@ impl Endpoint {
 
 /// An active QUIC connection to a remote endpoint.
 #[derive(uniffi::Object)]
-pub struct Connection(endpoint::Connection);
+pub struct Connection(
+    endpoint::Connection,
+    /// Runtime entered when this connection crossed the async FFI boundary.
+    tokio::runtime::Handle,
+);
 
 impl From<endpoint::Connection> for Connection {
     fn from(value: endpoint::Connection) -> Self {
-        Self(value)
+        Self(value, tokio::runtime::Handle::current())
     }
 }
 
@@ -762,13 +794,17 @@ impl Connection {
     /// Register a callback that fires with the current set of open paths
     /// whenever the path list (or selected path) changes.
     pub fn watch_paths(&self, callback: Arc<dyn PathChangeCallback>) -> Arc<WatchHandle> {
-        Arc::new(path::spawn_paths_watch(self.0.clone(), callback))
+        Arc::new(path::spawn_paths_watch(&self.1, self.0.clone(), callback))
     }
 
     /// Register a callback that fires for each individual path event (path
     /// opened, closed, selected, or lagged).
     pub fn watch_path_events(&self, callback: Arc<dyn PathEventCallback>) -> Arc<WatchHandle> {
-        Arc::new(path::spawn_path_events_watch(self.0.clone(), callback))
+        Arc::new(path::spawn_path_events_watch(
+            &self.1,
+            self.0.clone(),
+            callback,
+        ))
     }
 
     /// Set the maximum number of concurrent incoming unidirectional streams.
