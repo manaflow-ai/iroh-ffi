@@ -87,7 +87,8 @@ SWIFT
     -scheme MultiXCFrameworkConsumer \
     -destination 'platform=macOS' \
     -derivedDataPath "$TMP/DerivedData" \
-    ARCHS="$HOST_ARCH" ONLY_ACTIVE_ARCH=YES
+    ARCHS="$HOST_ARCH" ONLY_ACTIVE_ARCH=YES \
+    -quiet
 )
 
 EXECUTABLE="$TMP/DerivedData/Build/Products/Debug/CollisionConsumer"
