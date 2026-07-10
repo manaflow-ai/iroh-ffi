@@ -376,6 +376,56 @@ final class EndpointTests: XCTestCase {
         try await ep.close()
     }
 
+    func testDeferredNATAuthorizationPreservesTheExactLiveConnection() async throws {
+        XCTAssertNil(EndpointOptions().deferNatTraversalUntilAuthorized)
+
+        let server = try await Endpoint.bind(
+            options: EndpointOptions(
+                preset: presetN0(),
+                alpns: [ALPN],
+                relayMode: RelayMode.disabled(),
+                portMappingEnabled: false,
+                deferNatTraversalUntilAuthorized: true
+            )
+        )
+        let serverAddress = server.addr()
+        let serverAccept = Task {
+            try await server.acceptNext()!.accept().connect()
+        }
+
+        let client = try await Endpoint.bind(
+            options: EndpointOptions(
+                preset: presetN0(),
+                relayMode: RelayMode.disabled(),
+                portMappingEnabled: false,
+                deferNatTraversalUntilAuthorized: true
+            )
+        )
+        let clientConnection = try await client.connect(addr: serverAddress, alpn: ALPN)
+        let serverConnection = try await serverAccept.value
+        let clientConnectionID = clientConnection.stableId()
+        let serverConnectionID = serverConnection.stableId()
+
+        // cmux authorizes the client first, then the server after its final admission ACK.
+        try await clientConnection.authorizeNatTraversal()
+        try await clientConnection.authorizeNatTraversal()
+        try await serverConnection.authorizeNatTraversal()
+        try await serverConnection.authorizeNatTraversal()
+
+        XCTAssertEqual(clientConnection.stableId(), clientConnectionID)
+        XCTAssertEqual(serverConnection.stableId(), serverConnectionID)
+        let send = try await clientConnection.openUni()
+        try await send.writeAll(buf: Data("authorized".utf8))
+        try await send.finish()
+        let received = try await serverConnection.acceptUni().readToEnd(sizeLimit: 32)
+        XCTAssertEqual(String(decoding: received, as: UTF8.self), "authorized")
+
+        try clientConnection.close(errorCode: 0, reason: Data("done".utf8))
+        _ = await serverConnection.closed()
+        try await client.close()
+        try await server.close()
+    }
+
     func testClosedResolvesAfterExplicitClose() async throws {
         let endpoint = try await Endpoint.bind(options: EndpointOptions(preset: presetMinimal()))
         let closed = expectation(description: "endpoint closed signal")

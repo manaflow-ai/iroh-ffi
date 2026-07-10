@@ -1199,6 +1199,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_deferred_nat_traversal_authorizes_the_exact_live_connection() {
+        assert_eq!(
+            EndpointOptions::default().defer_nat_traversal_until_authorized,
+            None
+        );
+
+        let server = Endpoint::bind(EndpointOptions {
+            preset: Some(crate::preset_n0()),
+            alpns: Some(vec![TEST_ALPN.to_vec()]),
+            relay_mode: Some(Arc::new(RelayMode::disabled())),
+            port_mapping_enabled: Some(false),
+            defer_nat_traversal_until_authorized: Some(true),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let server_addr = server.addr();
+
+        let server_accept = {
+            let server = server.clone();
+            tokio::spawn(async move {
+                server
+                    .accept_next()
+                    .await
+                    .expect("incoming")
+                    .accept()
+                    .await
+                    .unwrap()
+                    .connect()
+                    .await
+                    .unwrap()
+            })
+        };
+
+        let client = Endpoint::bind(EndpointOptions {
+            preset: Some(crate::preset_n0()),
+            relay_mode: Some(Arc::new(RelayMode::disabled())),
+            port_mapping_enabled: Some(false),
+            defer_nat_traversal_until_authorized: Some(true),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let client_connection = client.connect(&server_addr, TEST_ALPN).await.unwrap();
+        let server_connection = server_accept.await.unwrap();
+        let client_connection_id = client_connection.stable_id();
+        let server_connection_id = server_connection.stable_id();
+
+        // cmux's admission barrier authorizes the client first. The server follows only after
+        // receiving the client's final application-level acknowledgement.
+        client_connection.authorize_nat_traversal().await.unwrap();
+        client_connection.authorize_nat_traversal().await.unwrap();
+        server_connection.authorize_nat_traversal().await.unwrap();
+        server_connection.authorize_nat_traversal().await.unwrap();
+
+        assert_eq!(client_connection.stable_id(), client_connection_id);
+        assert_eq!(server_connection.stable_id(), server_connection_id);
+        let stream = client_connection.open_uni().await.unwrap();
+        stream.write_all(b"authorized").await.unwrap();
+        stream.finish().await.unwrap();
+        let received = server_connection
+            .accept_uni()
+            .await
+            .unwrap()
+            .read_to_end(32)
+            .await
+            .unwrap();
+        assert_eq!(received, b"authorized");
+
+        client_connection.close(0, b"done").unwrap();
+        server_connection.closed().await;
+        client.close().await.unwrap();
+        server.close().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn test_closed_resolves_after_explicit_close() {
         let endpoint = Endpoint::bind(EndpointOptions {
             preset: Some(crate::preset_minimal()),
