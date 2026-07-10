@@ -482,6 +482,12 @@ impl Endpoint {
         Ok(())
     }
 
+    /// Wait until the endpoint closes, including an unexpected driver exit.
+    #[uniffi::method(async_runtime = "tokio")]
+    pub async fn closed(&self) {
+        self.inner.closed().await;
+    }
+
     /// Returns true if the endpoint has been closed.
     pub fn is_closed(&self) -> bool {
         self.inner.is_closed()
@@ -1061,6 +1067,24 @@ mod tests {
         assert_eq!(secret.public().to_bytes(), id.to_bytes());
         ep.close().await.unwrap();
         assert!(ep.is_closed());
+    }
+
+    #[tokio::test]
+    async fn test_closed_resolves_after_explicit_close() {
+        let endpoint = Endpoint::bind(EndpointOptions {
+            preset: Some(crate::preset_minimal()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let waiter_endpoint = endpoint.clone();
+        let waiter = tokio::spawn(async move { waiter_endpoint.closed().await });
+
+        endpoint.close().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), waiter)
+            .await
+            .expect("endpoint.closed() did not resolve")
+            .expect("closed waiter panicked");
     }
 
     #[tokio::test]
