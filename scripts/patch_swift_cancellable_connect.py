@@ -15,6 +15,12 @@ BEGIN_CONNECT_DOC = """    /**
      * Create a cancellable outgoing connection attempt without starting any
      * address lookup or network I/O.
      */"""
+CLOSED_DOC = """    /**
+     * Wait until the endpoint closes, including an unexpected driver exit.
+     */"""
+CONNECT_DOC = """    /**
+     * Connect to a remote endpoint via the given ALPN.
+     */"""
 
 
 def normalize_generated_additions(source: str) -> str:
@@ -36,6 +42,18 @@ def normalize_generated_additions(source: str) -> str:
         "})\n}\n\n" + BEGIN_CONNECT_DOC,
         1,
     )
+    source = source.replace(
+        "    func closed() async \n    \n",
+        "    func closed() async\n\n",
+        1,
+    )
+    protocol_closed = source.index(CLOSED_DOC)
+    method_start = source.index(CLOSED_DOC, protocol_closed + len(CLOSED_DOC))
+    method_end = source.index(CONNECT_DOC, method_start)
+    generated_closed = "\n".join(
+        line.rstrip() for line in source[method_start:method_end].split("\n")
+    )
+    source = source[:method_start] + generated_closed + source[method_end:]
     return source.rstrip() + "\n"
 
 

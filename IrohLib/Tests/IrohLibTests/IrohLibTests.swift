@@ -343,6 +343,19 @@ final class EndpointTests: XCTestCase {
         XCTAssertTrue(ep.isClosed())
     }
 
+    func testClosedResolvesAfterExplicitClose() async throws {
+        let endpoint = try await Endpoint.bind(options: EndpointOptions(preset: presetMinimal()))
+        let closed = expectation(description: "endpoint closed signal")
+        let waiter = Task {
+            await endpoint.closed()
+            closed.fulfill()
+        }
+
+        try await endpoint.close()
+        await fulfillment(of: [closed], timeout: 1)
+        await waiter.value
+    }
+
     func testEndpointTicketRoundtrip() async throws {
         let ep = try await Endpoint.bind(options: EndpointOptions(preset: presetMinimal()))
         let addr = ep.addr()

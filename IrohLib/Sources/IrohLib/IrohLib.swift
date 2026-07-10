@@ -2080,6 +2080,11 @@ public protocol EndpointProtocol: AnyObject, Sendable {
     func close() async throws 
     
     /**
+     * Wait until the endpoint closes, including an unexpected driver exit.
+     */
+    func closed() async
+
+    /**
      * Connect to a remote endpoint via the given ALPN.
      */
     func connect(addr: EndpointAddr, alpn: Data) async throws  -> Connection
@@ -2348,6 +2353,27 @@ open func close()async throws   {
         )
 }
     
+    /**
+     * Wait until the endpoint closes, including an unexpected driver exit.
+     */
+open func closed()async   {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_iroh_ffi_fn_method_endpoint_closed(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_iroh_ffi_rust_future_poll_void,
+            completeFunc: ffi_iroh_ffi_rust_future_complete_void,
+            freeFunc: ffi_iroh_ffi_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: nil
+
+        )
+}
+
     /**
      * Connect to a remote endpoint via the given ALPN.
      */
@@ -9549,6 +9575,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_iroh_ffi_checksum_method_endpoint_close() != 8483) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_iroh_ffi_checksum_method_endpoint_closed() != 40721) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_iroh_ffi_checksum_method_endpoint_connect() != 28652) {
