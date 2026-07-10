@@ -364,6 +364,7 @@ final class EndpointTests: XCTestCase {
     }
 
     func testBindWithPortMappingDisabled() async throws {
+        XCTAssertNil(EndpointOptions().portMappingEnabled)
         let options = EndpointOptions(
             preset: presetMinimal(),
             portMappingEnabled: false
@@ -408,7 +409,8 @@ final class EndpointTests: XCTestCase {
             options: EndpointOptions(
                 preset: presetN0(),
                 alpns: [ALPN],
-                relayMode: RelayMode.disabled()
+                relayMode: RelayMode.disabled(),
+                portMappingEnabled: false
             )
         )
         let serverAddr = server.addr()
@@ -428,7 +430,11 @@ final class EndpointTests: XCTestCase {
         }
 
         let client = try await Endpoint.bind(
-            options: EndpointOptions(preset: presetN0(), relayMode: RelayMode.disabled())
+            options: EndpointOptions(
+                preset: presetN0(),
+                relayMode: RelayMode.disabled(),
+                portMappingEnabled: false
+            )
         )
         let conn = try await client.connect(addr: serverAddr, alpn: ALPN)
         XCTAssertEqual(conn.remoteId(), serverId)

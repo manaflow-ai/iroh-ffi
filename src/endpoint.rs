@@ -43,6 +43,15 @@ impl EndpointBuilder {
         *guard = Some(f(builder));
     }
 
+    fn set_port_mapping_enabled(&self, enabled: bool) {
+        let config = if enabled {
+            iroh::endpoint::PortmapperConfig::default()
+        } else {
+            iroh::endpoint::PortmapperConfig::Disabled
+        };
+        self.map(move |builder| builder.portmapper_config(config));
+    }
+
     pub(crate) fn take_inner(&self) -> Result<iroh::endpoint::Builder, IrohError> {
         self.inner
             .lock()
@@ -203,6 +212,11 @@ pub struct EndpointOptions {
     /// supplied handlers.
     #[uniffi(default = None)]
     pub protocols: Option<HashMap<Vec<u8>, Arc<dyn ProtocolCreator>>>,
+    /// Override UPnP, PCP, and NAT-PMP gateway port mapping. `None` preserves
+    /// the chosen preset / iroh default; `Some(false)` skips SSDP and gateway
+    /// probing while retaining direct connections, hole punching, and relays.
+    #[uniffi(default = None)]
+    pub port_mapping_enabled: Option<bool>,
 }
 
 #[uniffi::export(with_foreign)]
@@ -392,6 +406,9 @@ impl Endpoint {
         }
         if let Some(addr) = options.bind_addr {
             wrapper.bind_addr(addr)?;
+        }
+        if let Some(enabled) = options.port_mapping_enabled {
+            wrapper.set_port_mapping_enabled(enabled);
         }
 
         let builder = wrapper.take_inner()?;
@@ -1168,6 +1185,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_bind_with_port_mapping_disabled() {
+        assert_eq!(EndpointOptions::default().port_mapping_enabled, None);
         let options = EndpointOptions {
             preset: Some(crate::preset_minimal()),
             port_mapping_enabled: Some(false),
@@ -1483,6 +1501,7 @@ mod tests {
             preset: Some(crate::preset_n0()),
             alpns: Some(vec![TEST_ALPN.to_vec()]),
             relay_mode: Some(Arc::new(RelayMode::disabled())),
+            port_mapping_enabled: Some(false),
             ..Default::default()
         })
         .await
@@ -1517,6 +1536,7 @@ mod tests {
         let client = Endpoint::bind(EndpointOptions {
             preset: Some(crate::preset_n0()),
             relay_mode: Some(Arc::new(RelayMode::disabled())),
+            port_mapping_enabled: Some(false),
             ..Default::default()
         })
         .await
