@@ -45,6 +45,7 @@ jobs:
         run: |
           cargo make swift-xcframework
           cargo make verify-swift-xcframework
+          cargo make verify-swift-multi-xcframework-consumer
           cargo make verify-swift-consumer
           bash scripts/release/zip_xcframework.sh
       - name: Bake SHA into Package.swift
