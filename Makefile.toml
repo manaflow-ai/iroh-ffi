@@ -212,7 +212,7 @@ if [ "$CONSOLE_USER" = "root" ]; then
   echo "ERROR: no interactive GUI session; cannot run xcodebuild test" >&2
   exit 1
 fi
-HOST_ARCH=$(uname -m)
+HOST_ARCH=$(scripts/apple_hardware_arch.sh)
 case "$HOST_ARCH" in
   arm64|x86_64) ;;
   *) echo "ERROR: unsupported macOS architecture: $HOST_ARCH" >&2; exit 1 ;;
@@ -492,7 +492,7 @@ if [ "$CONSOLE_USER" = "root" ]; then
   exit 1
 fi
 
-HOST_ARCH=$(uname -m)
+HOST_ARCH=$(scripts/apple_hardware_arch.sh)
 case "$HOST_ARCH" in
   arm64|x86_64) ;;
   *) echo "ERROR: unsupported macOS architecture: $HOST_ARCH" >&2; exit 1 ;;
@@ -513,24 +513,70 @@ arch -"$HOST_ARCH" xcodebuild build \
 # 2. iOS Simulator — full xcodebuild test boots a sim, installs the test
 #    bundle, and runs IrohLibTests on the iOS runtime. Catches "links but
 #    crashes on iOS startup" + verifies the simulator slice actually loads.
-#    Pick any available iOS Simulator via simctl: local dev (iPhone 17 Pro,
-#    iPhone Air, …) and CI (iPhone 16 default) both work, no hardcoded name
-#    to keep up with Apple's annual lineup.
-SIM_ID=$(xcrun simctl list devices available -j | python3 -c '
-import json, sys
+#
+#    CoreSimulator's global registry can contain devices from newer Xcodes.
+#    Selecting the first "available" UUID can therefore hand Xcode 15 a
+#    device created for an unsupported iOS runtime. Create an isolated device
+#    from the active Xcode's simulator SDK/runtime instead, then remove it.
+SIM_ID=""
+cleanup_simulator() {
+  if [ -n "$SIM_ID" ]; then
+    launchctl asuser "$CONSOLE_UID" arch -"$HOST_ARCH" xcrun simctl shutdown "$SIM_ID" >/dev/null 2>&1 || true
+    launchctl asuser "$CONSOLE_UID" arch -"$HOST_ARCH" xcrun simctl delete "$SIM_ID" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup_simulator EXIT INT TERM
+
+if [ -n "${IROH_IOS_SIM_DEST:-}" ]; then
+  DEST="$IROH_IOS_SIM_DEST"
+else
+  SIM_SDK_VERSION=$(arch -"$HOST_ARCH" xcrun --sdk iphonesimulator --show-sdk-version)
+  SIM_RUNTIME=$(arch -"$HOST_ARCH" xcrun simctl list runtimes available -j | python3 -c '
+import json, re, sys
+
+sdk = tuple(int(n) for n in re.findall(r"\d+", sys.argv[1]))
 data = json.load(sys.stdin)
-for runtime, devices in data["devices"].items():
-    if "SimRuntime.iOS" in runtime:
-        for d in devices:
-            if d.get("isAvailable"):
-                print(d["udid"]); sys.exit(0)
+candidates = []
+for runtime in data.get("runtimes", []):
+    identifier = runtime.get("identifier", "")
+    version = tuple(int(n) for n in re.findall(r"\d+", runtime.get("version", "")))
+    if runtime.get("isAvailable") and "SimRuntime.iOS" in identifier and version <= sdk:
+        candidates.append((version, identifier))
+if not candidates:
+    sys.exit(1)
+print(max(candidates)[1])
+' "$SIM_SDK_VERSION" || true)
+  if [ -z "$SIM_RUNTIME" ]; then
+    echo "ERROR: no iOS Simulator runtime compatible with active SDK $SIM_SDK_VERSION." >&2
+    echo "  Install one via Xcode > Settings > Components." >&2
+    exit 1
+  fi
+
+  SIM_DEVICE_TYPE=$(arch -"$HOST_ARCH" xcrun simctl list devicetypes -j | python3 -c '
+import json, sys
+
+devices = json.load(sys.stdin).get("devicetypes", [])
+for preferred in ("iPhone 15", "iPhone 14"):
+    for device in devices:
+        if device.get("name") == preferred:
+            print(device["identifier"]); sys.exit(0)
+for device in devices:
+    if device.get("name", "").startswith("iPhone"):
+        print(device["identifier"]); sys.exit(0)
 sys.exit(1)
 ' || true)
-if [ -z "$SIM_ID" ]; then
-  echo "ERROR: no available iOS Simulator. Install one via Xcode > Settings > Components." >&2
-  exit 1
+  if [ -z "$SIM_DEVICE_TYPE" ]; then
+    echo "ERROR: active Xcode has no iPhone Simulator device type." >&2
+    exit 1
+  fi
+
+  SIM_NAME="IrohLib-${GITHUB_RUN_ID:-local}-$$"
+  SIM_ID=$(launchctl asuser "$CONSOLE_UID" arch -"$HOST_ARCH" xcrun simctl create \
+    "$SIM_NAME" "$SIM_DEVICE_TYPE" "$SIM_RUNTIME")
+  launchctl asuser "$CONSOLE_UID" arch -"$HOST_ARCH" xcrun simctl boot "$SIM_ID"
+  launchctl asuser "$CONSOLE_UID" arch -"$HOST_ARCH" xcrun simctl bootstatus "$SIM_ID" -b
+  DEST="platform=iOS Simulator,id=$SIM_ID"
 fi
-DEST="${IROH_IOS_SIM_DEST:-platform=iOS Simulator,id=$SIM_ID}"
 echo "==> xcodebuild test on iOS Simulator ($DEST)"
 launchctl asuser "$CONSOLE_UID" arch -"$HOST_ARCH" xcodebuild test \
   -scheme IrohLib \

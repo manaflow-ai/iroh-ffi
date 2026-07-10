@@ -14,7 +14,7 @@ IROH_XCF="$REPO_ROOT/Iroh.xcframework"
   exit 1
 }
 
-HOST_ARCH=$(uname -m)
+HOST_ARCH=$("$REPO_ROOT/scripts/apple_hardware_arch.sh")
 case "$HOST_ARCH" in
   arm64|x86_64) ;;
   *) echo "ERROR: unsupported macOS architecture: $HOST_ARCH" >&2; exit 1 ;;
@@ -32,11 +32,11 @@ printf '%s\n' \
   '}' > "$TMP/OtherFlatHeaders/module.modulemap"
 printf '%s\n' 'int other_flat_value(void) { return 42; }' > "$TMP/other_flat.c"
 
-SDK=$(xcrun --sdk macosx --show-sdk-path)
-xcrun clang -arch "$HOST_ARCH" -isysroot "$SDK" -mmacosx-version-min=14.0 \
+SDK=$(arch -"$HOST_ARCH" xcrun --sdk macosx --show-sdk-path)
+arch -"$HOST_ARCH" xcrun clang -arch "$HOST_ARCH" -isysroot "$SDK" -mmacosx-version-min=14.0 \
   -c "$TMP/other_flat.c" -o "$TMP/other_flat.o"
-xcrun libtool -static -o "$TMP/libother_flat.a" "$TMP/other_flat.o"
-xcodebuild -create-xcframework \
+arch -"$HOST_ARCH" xcrun libtool -static -o "$TMP/libother_flat.a" "$TMP/other_flat.o"
+arch -"$HOST_ARCH" xcodebuild -create-xcframework \
   -library "$TMP/libother_flat.a" \
   -headers "$TMP/OtherFlatHeaders" \
   -output "$TMP/OtherFlat.xcframework" >/dev/null
@@ -83,7 +83,7 @@ SWIFT
 
 (
   cd "$TMP"
-  xcodebuild build \
+  arch -"$HOST_ARCH" xcodebuild build \
     -scheme MultiXCFrameworkConsumer \
     -destination 'platform=macOS' \
     -derivedDataPath "$TMP/DerivedData" \
@@ -112,7 +112,7 @@ file -b "$IROH_BINARY" | grep -q 'current ar archive' || {
   exit 1
 }
 
-if xcrun otool -L "$EXECUTABLE" | grep -q 'Iroh.framework'; then
+if arch -"$HOST_ARCH" xcrun otool -L "$EXECUTABLE" | grep -q 'Iroh.framework'; then
   echo "ERROR: fixture unexpectedly has a dynamic Iroh.framework dependency" >&2
   exit 1
 fi
