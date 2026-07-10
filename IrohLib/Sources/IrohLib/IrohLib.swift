@@ -7747,6 +7747,12 @@ public struct EndpointOptions {
      * supplied handlers.
      */
     public var protocols: [Data: ProtocolCreator]?
+    /**
+     * Override UPnP, PCP, and NAT-PMP gateway port mapping. `None` preserves
+     * the chosen preset / iroh default; `Some(false)` skips SSDP and gateway
+     * probing while retaining direct connections, hole punching, and relays.
+     */
+    public var portMappingEnabled: Bool?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -7775,13 +7781,19 @@ public struct EndpointOptions {
          * Custom protocols to accept on this endpoint, keyed by ALPN. If provided,
          * an internal router is spawned to dispatch incoming connections to the
          * supplied handlers.
-         */protocols: [Data: ProtocolCreator]? = nil) {
+         */protocols: [Data: ProtocolCreator]? = nil, 
+        /**
+         * Override UPnP, PCP, and NAT-PMP gateway port mapping. `None` preserves
+         * the chosen preset / iroh default; `Some(false)` skips SSDP and gateway
+         * probing while retaining direct connections, hole punching, and relays.
+         */portMappingEnabled: Bool? = nil) {
         self.preset = preset
         self.bindAddr = bindAddr
         self.secretKey = secretKey
         self.alpns = alpns
         self.relayMode = relayMode
         self.protocols = protocols
+        self.portMappingEnabled = portMappingEnabled
     }
 
     
@@ -7805,7 +7817,8 @@ public struct FfiConverterTypeEndpointOptions: FfiConverterRustBuffer {
                 secretKey: FfiConverterOptionData.read(from: &buf), 
                 alpns: FfiConverterOptionSequenceData.read(from: &buf), 
                 relayMode: FfiConverterOptionTypeRelayMode.read(from: &buf), 
-                protocols: FfiConverterOptionDictionaryDataTypeProtocolCreator.read(from: &buf)
+                protocols: FfiConverterOptionDictionaryDataTypeProtocolCreator.read(from: &buf), 
+                portMappingEnabled: FfiConverterOptionBool.read(from: &buf)
         )
     }
 
@@ -7816,6 +7829,7 @@ public struct FfiConverterTypeEndpointOptions: FfiConverterRustBuffer {
         FfiConverterOptionSequenceData.write(value.alpns, into: &buf)
         FfiConverterOptionTypeRelayMode.write(value.relayMode, into: &buf)
         FfiConverterOptionDictionaryDataTypeProtocolCreator.write(value.protocols, into: &buf)
+        FfiConverterOptionBool.write(value.portMappingEnabled, into: &buf)
     }
 }
 
