@@ -24,8 +24,8 @@ import Foundation
 // both repository and tag on an isolated release branch. CI then bakes the
 // asset checksum there; that commit is tagged and published before it is
 // merged, so the default branch never names a missing or draft-only asset.
-let releaseRepository = "n0-computer/iroh-ffi"
-let releaseTag = "v1.0.0"
+let releaseRepository = "manaflow-ai/iroh-ffi"
+let releaseTag = "v1.0.0-cmux.2"
 let releaseChecksum = "514b147f7965fe17acaece9a1157cf9421463b6c9282224983e871ea868b86ef"
 
 let packageDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
