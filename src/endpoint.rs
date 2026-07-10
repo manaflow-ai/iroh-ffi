@@ -26,6 +26,8 @@ pub struct EndpointBuilder {
 
 impl EndpointBuilder {
     pub(crate) fn from_inner(builder: iroh::endpoint::Builder) -> Self {
+        #[cfg(any(target_os = "ios", target_os = "macos"))]
+        crate::apple_compat::ensure_linked();
         Self {
             inner: std::sync::Mutex::new(Some(builder)),
         }

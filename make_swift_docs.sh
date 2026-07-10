@@ -8,7 +8,7 @@ set -eu
 #
 # `swift test`-style SwiftPM cannot form the `Iroh` module on this setup, so
 # docs are built through xcodebuild (the working toolchain), arch-forced to
-# arm64 to match the arm64-only macOS xcframework slice. `docc
+# arm64 on the ARM documentation runner. `docc
 # transform-for-static-hosting` rewrites asset/base paths for the Pages
 # subpath; only the deep documentation/ entry gets the correct baseUrl, so we
 # replace the SPA-shell root index.html with a redirect into it.

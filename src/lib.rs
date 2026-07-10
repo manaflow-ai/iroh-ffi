@@ -1,6 +1,8 @@
 mod accept;
 #[cfg(target_os = "android")]
 mod android_init;
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+mod apple_compat;
 mod endpoint;
 mod error;
 mod key;

@@ -1,6 +1,6 @@
 set -eu
 
-# Builds the full 4-target Apple xcframework via `xcodebuild
+# Builds the full 5-target Apple xcframework via `xcodebuild
 # -create-xcframework -library`. Prefer `cargo make swift-xcframework`.
 #
 # Apple-blessed shape: each slice ships a flat `lib<name>.a` + `Headers/`
@@ -39,12 +39,12 @@ export CFLAGS="${CFLAGS:-} \
   -ffile-prefix-map=${CARGO_PFX}/git=/cargo/git \
   -ffile-prefix-map=${REPO_PFX}=/build"
 
-# Apple deployment-target floors. iroh's netdev calls
-# `nw_path_is_ultra_constrained` (iOS 17 / macOS 14); rustc's default
-# `*-apple-ios` floor and the unset macOS floor produce undefined-symbol
-# link errors at xcframework-consumption time on older SDKs.
+# Apple deployment-target floors. iroh's netdev currently calls the OS 26-only
+# `nw_path_is_ultra_constrained` API. `src/apple_compat.c` back-deploys that
+# call; these explicit floors keep every Mach-O slice aligned with the oldest
+# OS versions this package supports.
 export IPHONEOS_DEPLOYMENT_TARGET="17.5"
-export MACOSX_DEPLOYMENT_TARGET="14.5"
+export MACOSX_DEPLOYMENT_TARGET="14.0"
 
 UDL_NAME="iroh_ffi"
 FRAMEWORK_NAME="Iroh"
@@ -59,13 +59,15 @@ TARGET_DIR=$(cargo metadata --format-version 1 --no-deps | python3 -c 'import js
 cargo build --lib
 
 echo "Building aarch64-apple-ios"
-cargo build --release --target aarch64-apple-ios
+cargo build --release --lib --target aarch64-apple-ios
 echo "Building aarch64-apple-ios-sim"
-cargo build --release --target aarch64-apple-ios-sim
+cargo build --release --lib --target aarch64-apple-ios-sim
 echo "Building x86_64-apple-ios"
-cargo build --release --target x86_64-apple-ios
+cargo build --release --lib --target x86_64-apple-ios
 echo "Building aarch64-apple-darwin"
-cargo build --release --target aarch64-apple-darwin
+cargo build --release --lib --target aarch64-apple-darwin
+echo "Building x86_64-apple-darwin"
+cargo build --release --lib --target x86_64-apple-darwin
 
 # Wipe outputs so we don't blend stale slices into the new xcframework.
 rm -rf "$FRAMEWORK_NAME.xcframework"
@@ -110,6 +112,17 @@ lipo -create \
     "$TARGET_DIR/x86_64-apple-ios/release/lib${UDL_NAME}.a" \
     -output "$SIM_FAT"
 
+# Universal macOS slice. Keep arm64 first to preserve the native slice's
+# bytes and behavior while adding Intel as an independent architecture in
+# the same Apple-supported xcframework library.
+MACOS_FAT="$TARGET_DIR/apple-macos-fat/lib${UDL_NAME}.a"
+mkdir -p "$(dirname "$MACOS_FAT")"
+rm -f "$MACOS_FAT"
+lipo -create \
+    "$TARGET_DIR/aarch64-apple-darwin/release/lib${UDL_NAME}.a" \
+    "$TARGET_DIR/x86_64-apple-darwin/release/lib${UDL_NAME}.a" \
+    -output "$MACOS_FAT"
+
 # Assemble the xcframework. xcodebuild reads each .a's Mach-O headers to
 # determine platform + arch + (simulator vs device), and emits the outer
 # Info.plist + per-slice directories with the flat `lib<name>.a +
@@ -121,7 +134,7 @@ xcodebuild -create-xcframework \
     -headers "$HEADERS_STAGE" \
     -library "$SIM_FAT" \
     -headers "$HEADERS_STAGE" \
-    -library "$TARGET_DIR/aarch64-apple-darwin/release/lib${UDL_NAME}.a" \
+    -library "$MACOS_FAT" \
     -headers "$HEADERS_STAGE" \
     -output "$FRAMEWORK_NAME.xcframework"
 

@@ -17,6 +17,7 @@ env:
 
 jobs:
   kotlin:
+    if: github.repository == 'n0-computer/iroh-ffi'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     name: Kotlin - JVM test (${{ matrix.name }})
@@ -46,6 +47,7 @@ jobs:
       - run: cargo make test-kotlin
 
   kotlin-jvm-consumer-smoke:
+    if: github.repository == 'n0-computer/iroh-ffi'
     name: Kotlin - JVM consumer smoke (${{ matrix.name }})
     timeout-minutes: 30
     runs-on: ${{ matrix.runner }}
@@ -98,6 +100,7 @@ jobs:
       - run: cargo make verify-kotlin-consumer
 
   kotlin-android:
+    if: github.repository == 'n0-computer/iroh-ffi'
     name: Kotlin - Android cross-build
     timeout-minutes: 45
     runs-on: [self-hosted, linux, X64]
@@ -125,6 +128,7 @@ jobs:
         run: cargo make kotlin-android
 
   kotlin-android-consumer-smoke:
+    if: github.repository == 'n0-computer/iroh-ffi'
     name: Kotlin - Android consumer smoke (emulator)
     timeout-minutes: 45
     # ubuntu-latest has /dev/kvm via nested-virt; kotlin-android's
