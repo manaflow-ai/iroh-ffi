@@ -1167,6 +1167,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_bind_with_port_mapping_disabled() {
+        let options = EndpointOptions {
+            preset: Some(crate::preset_minimal()),
+            port_mapping_enabled: Some(false),
+            ..Default::default()
+        };
+        assert_eq!(options.port_mapping_enabled, Some(false));
+
+        let ep = Endpoint::bind(options).await.unwrap();
+        assert!(!ep.bound_sockets().is_empty(), "should have bound sockets");
+        ep.close().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn test_closed_resolves_after_explicit_close() {
         let endpoint = Endpoint::bind(EndpointOptions {
             preset: Some(crate::preset_minimal()),

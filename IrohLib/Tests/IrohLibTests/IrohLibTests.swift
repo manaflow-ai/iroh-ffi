@@ -363,6 +363,18 @@ final class EndpointTests: XCTestCase {
         XCTAssertTrue(ep.isClosed())
     }
 
+    func testBindWithPortMappingDisabled() async throws {
+        let options = EndpointOptions(
+            preset: presetMinimal(),
+            portMappingEnabled: false
+        )
+        XCTAssertEqual(options.portMappingEnabled, false)
+
+        let ep = try await Endpoint.bind(options: options)
+        XCTAssertFalse(ep.boundSockets().isEmpty)
+        try await ep.close()
+    }
+
     func testClosedResolvesAfterExplicitClose() async throws {
         let endpoint = try await Endpoint.bind(options: EndpointOptions(preset: presetMinimal()))
         let closed = expectation(description: "endpoint closed signal")
