@@ -22,7 +22,8 @@ CI never writes to `main`.
 
 ## cmux fork: safe Swift bootstrap
 
-Until `v1.0.0-cmux.1` is public, `Package.swift` intentionally resolves the
+`v1.0.0-cmux.1` was an aborted draft and must never be published. Until
+`v1.0.0-cmux.2` is public, `Package.swift` intentionally resolves the
 last published `n0-computer/iroh-ffi` asset. Do not change the default branch
 to `manaflow-ai/iroh-ffi` with the old checksum. That would make every fresh
 remote SwiftPM checkout request an asset that does not exist.
@@ -36,48 +37,52 @@ Use this two-phase sequence for the first fork release:
    ```sh
    git switch main
    git pull --ff-only
-   git switch -c release/v1.0.0-cmux.1
-   cargo make prepare-swift-fork-release 1.0.0-cmux.1
+   git switch -c release/v1.0.0-cmux.2
+   cargo make prepare-swift-fork-release 1.0.0-cmux.2
    git add Package.swift
-   git commit -m "chore(release): prepare Swift v1.0.0-cmux.1"
-   git push -u origin release/v1.0.0-cmux.1
+   git commit -m "chore(release): prepare Swift v1.0.0-cmux.2"
+   git push -u origin release/v1.0.0-cmux.2
    ```
 
    This changes `releaseRepository` and `releaseTag`. The checksum remains the
    previous value temporarily, so this branch must not be merged yet.
 3. Wait for `release_swift.yml`. It builds and verifies the five Apple slices,
    commits the exact zip checksum back to the release branch, and uploads that
-   same zip to the draft `v1.0.0-cmux.1` release.
+   same zip to the draft `v1.0.0-cmux.2` release, and records a signed GitHub
+   build-provenance attestation for that exact archive.
 4. Verify the bot commit and draft asset independently:
 
    ```sh
-   git fetch origin release/v1.0.0-cmux.1
+   git fetch origin release/v1.0.0-cmux.2
    rm -rf /tmp/iroh-ffi-swift-release-check
    mkdir -p /tmp/iroh-ffi-swift-release-check
-   gh release download v1.0.0-cmux.1 \
+   gh release download v1.0.0-cmux.2 \
      --repo manaflow-ai/iroh-ffi \
      --pattern IrohLib.xcframework.zip \
      --dir /tmp/iroh-ffi-swift-release-check
+   gh attestation verify \
+     /tmp/iroh-ffi-swift-release-check/IrohLib.xcframework.zip \
+     --repo manaflow-ai/iroh-ffi
    swift package compute-checksum \
      /tmp/iroh-ffi-swift-release-check/IrohLib.xcframework.zip
-   git show origin/release/v1.0.0-cmux.1:Package.swift | \
+   git show origin/release/v1.0.0-cmux.2:Package.swift | \
      grep 'let releaseChecksum'
    ```
 
    The two 64-character hashes must match. Also confirm the release branch
-   names `manaflow-ai/iroh-ffi` and `v1.0.0-cmux.1`.
+   names `manaflow-ai/iroh-ffi` and `v1.0.0-cmux.2`.
 5. Tag the exact checksum commit before merging it. The tag workflow fails
    closed if the verified draft is missing:
 
    ```sh
-   RELEASE_COMMIT=$(git rev-parse origin/release/v1.0.0-cmux.1)
-   git tag v1.0.0-cmux.1 "$RELEASE_COMMIT"
-   git push origin v1.0.0-cmux.1
+   RELEASE_COMMIT=$(git rev-parse origin/release/v1.0.0-cmux.2)
+   git tag v1.0.0-cmux.2 "$RELEASE_COMMIT"
+   git push origin v1.0.0-cmux.2
    RUN_ID=$(gh run list --repo manaflow-ai/iroh-ffi \
-     --workflow release.yml --branch v1.0.0-cmux.1 --limit 1 \
+     --workflow release.yml --branch v1.0.0-cmux.2 --limit 1 \
      --json databaseId --jq '.[0].databaseId')
    gh run watch "$RUN_ID" --repo manaflow-ai/iroh-ffi
-   gh release view v1.0.0-cmux.1 \
+   gh release view v1.0.0-cmux.2 \
      --repo manaflow-ai/iroh-ffi \
      --json isDraft,url
    ```

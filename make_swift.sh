@@ -48,22 +48,22 @@ SWIFT_INTERFACE="IrohLib"
 INCLUDE_DIR="include/apple"
 
 # Resolve the cargo target dir (honours CARGO_TARGET_DIR / .cargo config).
-TARGET_DIR=$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys;print(json.load(sys.stdin)["target_directory"])')
+TARGET_DIR=$(cargo metadata --locked --format-version 1 --no-deps | python3 -c 'import json,sys;print(json.load(sys.stdin)["target_directory"])')
 
 # Default lib for the bindgen-metadata step (uniffi-bindgen reads symbols
 # from a debug dylib to discover the FFI surface).
-cargo build --lib
+cargo build --locked --lib
 
 echo "Building aarch64-apple-ios"
-cargo build --release --lib --target aarch64-apple-ios
+cargo build --locked --release --lib --target aarch64-apple-ios
 echo "Building aarch64-apple-ios-sim"
-cargo build --release --lib --target aarch64-apple-ios-sim
+cargo build --locked --release --lib --target aarch64-apple-ios-sim
 echo "Building x86_64-apple-ios"
-cargo build --release --lib --target x86_64-apple-ios
+cargo build --locked --release --lib --target x86_64-apple-ios
 echo "Building aarch64-apple-darwin"
-cargo build --release --lib --target aarch64-apple-darwin
+cargo build --locked --release --lib --target aarch64-apple-darwin
 echo "Building x86_64-apple-darwin"
-cargo build --release --lib --target x86_64-apple-darwin
+cargo build --locked --release --lib --target x86_64-apple-darwin
 
 # Wipe outputs so we don't blend stale slices into the new xcframework.
 rm -rf "$FRAMEWORK_NAME.xcframework"
@@ -74,7 +74,7 @@ mkdir -p "$INCLUDE_DIR"
 # ${UDL_NAME}.swift (the Swift binding code), and ${UDL_NAME}FFI.modulemap
 # (a module declaration we ignore — we ship our own module.modulemap below
 # that names the module `Iroh` to match what the Swift consumer imports).
-cargo run --bin uniffi-bindgen generate --language swift --out-dir ./$INCLUDE_DIR --library "$TARGET_DIR/debug/lib${UDL_NAME}.dylib" --config uniffi.toml
+cargo run --locked --bin uniffi-bindgen generate --language swift --out-dir ./$INCLUDE_DIR --library "$TARGET_DIR/debug/lib${UDL_NAME}.dylib" --config uniffi.toml
 
 # Stage framework metadata shared by all three platform slices. Export.h is
 # a one-line umbrella so the UniFFI-generated header name does not leak into
