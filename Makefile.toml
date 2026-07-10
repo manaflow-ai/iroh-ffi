@@ -221,6 +221,7 @@ rm -rf .xcode-ddata
 launchctl asuser "$CONSOLE_UID" arch -"$HOST_ARCH" xcodebuild test \
   -scheme IrohLib -destination 'platform=macOS' -derivedDataPath .xcode-ddata \
   ARCHS="$HOST_ARCH" ONLY_ACTIVE_ARCH=YES
+bash scripts/verify_swift_multi_xcframework_consumer.sh
 '''
 
 [tasks.swift-xcframework]
@@ -336,6 +337,14 @@ assert_build_versions "$MACOS" "x86_64" "1" "14.0" "macOS x86_64"
 
 [ $fail -eq 0 ] || { echo "verify-swift-xcframework: FAILED" >&2; exit 1; }
 echo "verify-swift-xcframework: OK"
+'''
+
+[tasks.verify-swift-multi-xcframework-consumer]
+description = "Build a package that combines Iroh with a second flat static XCFramework, proving module maps do not collide and Iroh remains statically linked."
+script_runner = "@shell"
+script = '''
+set -eu
+bash scripts/verify_swift_multi_xcframework_consumer.sh
 '''
 
 [tasks.verify-kotlin-artifact]
@@ -673,6 +682,7 @@ fi
 echo "==> swift: build + verify layout + iOS sim test + same-host zip determinism"
 cargo make swift-xcframework >/dev/null
 cargo make verify-swift-xcframework >/dev/null
+cargo make verify-swift-multi-xcframework-consumer >/dev/null
 cargo make verify-swift-consumer >/dev/null
 bash scripts/release/zip_xcframework.sh
 H1=$(shasum -a 256 IrohLib.xcframework.zip | awk '{print $1}')
