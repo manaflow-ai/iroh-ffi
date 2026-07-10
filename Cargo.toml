@@ -63,10 +63,10 @@ cc = "1"
 uniffi = { version = "0.31.1", features = ["build"] }
 
 [patch.crates-io]
-iroh = { git = "https://github.com/manaflow-ai/iroh.git", rev = "f55ec3f53a6920049acc07521ba4bd62f687f54c" }
-iroh-base = { git = "https://github.com/manaflow-ai/iroh.git", rev = "f55ec3f53a6920049acc07521ba4bd62f687f54c" }
-iroh-dns = { git = "https://github.com/manaflow-ai/iroh.git", rev = "f55ec3f53a6920049acc07521ba4bd62f687f54c" }
-iroh-relay = { git = "https://github.com/manaflow-ai/iroh.git", rev = "f55ec3f53a6920049acc07521ba4bd62f687f54c" }
+iroh = { git = "https://github.com/manaflow-ai/iroh.git", rev = "829518871066919bcb5f4676b767dd2cc9ac6184" }
+iroh-base = { git = "https://github.com/manaflow-ai/iroh.git", rev = "829518871066919bcb5f4676b767dd2cc9ac6184" }
+iroh-dns = { git = "https://github.com/manaflow-ai/iroh.git", rev = "829518871066919bcb5f4676b767dd2cc9ac6184" }
+iroh-relay = { git = "https://github.com/manaflow-ai/iroh.git", rev = "829518871066919bcb5f4676b767dd2cc9ac6184" }
 
 [profile.release]
 lto = true
