@@ -58,14 +58,14 @@ jobs:
         if gh release view "$TAG" --json isDraft -q .isDraft 2>/dev/null | grep -q true; then
           echo "Promoting existing draft $TAG to published"
           gh release edit "$TAG" --draft=false
+        elif gh release view "$TAG" >/dev/null 2>&1; then
+          echo "Release $TAG already published"
         elif [ "${GITHUB_REPOSITORY}" = "manaflow-ai/iroh-ffi" ]; then
           echo "ERROR: refusing to publish fork release $TAG without the verified Swift draft asset" >&2
           exit 1
-        elif ! gh release view "$TAG" >/dev/null 2>&1; then
+        else
           echo "Creating fresh published release $TAG (no draft from release_swift.yml)"
           gh release create "$TAG" --title "$TAG" --notes ""
-        else
-          echo "Release $TAG already published"
         fi
 
   # The cmux fork publishes only its Swift xcframework. Keep upstream's
