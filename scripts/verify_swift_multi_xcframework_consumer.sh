@@ -1,5 +1,5 @@
 #!/bin/bash
-set -eu
+set -euo pipefail
 
 # Xcode installs headers from flat static-library XCFrameworks into one shared
 # Products/<configuration>/include directory. Two such artifacts that both
