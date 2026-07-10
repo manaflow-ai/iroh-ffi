@@ -249,12 +249,12 @@ set -eu
 # ---------------------------------------------------------------------------
 
 [tasks.verify-swift-xcframework]
-description = "Verify the built Iroh.xcframework layout, platform variants, and binary architectures, including universal arm64+x86_64 macOS support."
+description = "Verify product-scoped static framework layout, platform variants, and binary architectures, including universal arm64+x86_64 macOS support."
 script_runner = "@shell"
 script = '''
 set -eu
 XCF="${IROH_XCFRAMEWORK:-Iroh.xcframework}"
-LIB="libiroh_ffi.a"
+FW="Iroh"
 [ -d "$XCF" ] || { echo "ERROR: $XCF not found (build it first: cargo make swift-xcframework)" >&2; exit 1; }
 [ -f "$XCF/Info.plist" ] || { echo "ERROR: missing $XCF/Info.plist" >&2; exit 1; }
 
@@ -264,23 +264,46 @@ err() { printf 'FAIL: %s\n' "$*" >&2; fail=1; }
 for slice_dir in "$XCF"/*/; do
   slice=$(basename "$slice_dir")
   printf '  slice %s\n' "$slice"
+  framework="$slice_dir/$FW.framework"
+  [ -d "$framework" ] || { err "$slice: missing $FW.framework"; continue; }
+  [ ! -e "$slice_dir/Headers/module.modulemap" ] || err "$slice: module map escaped the product-scoped framework"
 
-  # Flat library layout: each slice has lib.a + Headers/ at the slice root.
-  # No .framework directory anywhere — that was the deprecated hand-laid
-  # pattern that needed per-Xcode-major maintenance.
-  [ -f "$slice_dir/$LIB" ]                       || err "$slice: missing $LIB"
-  [ -d "$slice_dir/Headers" ]                    || err "$slice: missing Headers/"
-  [ -f "$slice_dir/Headers/iroh_ffiFFI.h" ]      || err "$slice: missing Headers/iroh_ffiFFI.h"
-  [ -f "$slice_dir/Headers/Export.h" ]           || err "$slice: missing Headers/Export.h (umbrella)"
-  [ -f "$slice_dir/Headers/module.modulemap" ]   || err "$slice: missing Headers/module.modulemap"
-  [ -d "$slice_dir/Iroh.framework" ]             && err "$slice: stale Iroh.framework/ present — xcodebuild -create-xcframework -library produces a flat layout with no .framework dir"
+  case "$slice" in
+    macos-*)
+      binary="$framework/Versions/A/$FW"
+      headers="$framework/Versions/A/Headers"
+      modules="$framework/Versions/A/Modules"
+      [ -f "$framework/Versions/A/Resources/Info.plist" ] || err "$slice: missing versioned Info.plist"
+      [ -L "$framework/Versions/Current" ] || err "$slice: Versions/Current is not a symlink"
+      [ "$(readlink "$framework/Versions/Current" 2>/dev/null || true)" = A ] || err "$slice: Versions/Current does not point to A"
+      [ -L "$framework/$FW" ] || err "$slice: top-level binary is not a symlink"
+      [ -L "$framework/Headers" ] || err "$slice: top-level Headers is not a symlink"
+      [ -L "$framework/Modules" ] || err "$slice: top-level Modules is not a symlink"
+      ;;
+    *)
+      binary="$framework/$FW"
+      headers="$framework/Headers"
+      modules="$framework/Modules"
+      [ -f "$framework/Info.plist" ] || err "$slice: missing shallow Info.plist"
+      [ ! -d "$framework/Versions" ] || err "$slice: iOS framework unexpectedly uses a versioned layout"
+      ;;
+  esac
+
+  [ -f "$binary" ] || err "$slice: missing static framework binary"
+  [ -f "$headers/iroh_ffiFFI.h" ] || err "$slice: missing Headers/iroh_ffiFFI.h"
+  [ -f "$headers/Export.h" ] || err "$slice: missing Headers/Export.h"
+  [ -f "$modules/module.modulemap" ] || err "$slice: missing Modules/module.modulemap"
+  grep -q "framework module $FW" "$modules/module.modulemap" 2>/dev/null || err "$slice: module map is not framework-scoped"
+  file -b "$binary" 2>/dev/null | grep -q 'current ar archive' || err "$slice: framework binary is not a static archive"
 done
+
+plutil -p "$XCF/Info.plist" | grep -q 'HeadersPath' && err "outer Info.plist exposes flat HeadersPath entries"
 
 # Verify the artifact's actual Mach-O slices. This catches a successful
 # cross-build that was accidentally omitted from the shipped xcframework.
-IOS_DEVICE=$(find "$XCF" -mindepth 2 -maxdepth 2 -name "$LIB" -path '*/ios-arm64/*' -print -quit)
-IOS_SIM=$(find "$XCF" -mindepth 2 -maxdepth 2 -name "$LIB" -path '*/ios-arm64_x86_64-simulator/*' -print -quit)
-MACOS=$(find "$XCF" -mindepth 2 -maxdepth 2 -name "$LIB" \( -path '*/macos-arm64_x86_64/*' -o -path '*/macos-x86_64_arm64/*' \) -print -quit)
+IOS_DEVICE=$(find "$XCF" -type f -path '*/ios-arm64/Iroh.framework/Iroh' -print -quit)
+IOS_SIM=$(find "$XCF" -type f -path '*/ios-arm64_x86_64-simulator/Iroh.framework/Iroh' -print -quit)
+MACOS=$(find "$XCF" -type f -path '*/macos-*/Iroh.framework/Versions/A/Iroh' -print -quit)
 
 [ -n "$IOS_DEVICE" ] || err "missing iOS device arm64 library"
 [ -n "$IOS_SIM" ]    || err "missing universal iOS Simulator library"
@@ -575,8 +598,8 @@ args = ["scripts/verify_kotlin_consumer.sh"]
 description = "Build the Swift DocC docs, laid out for Pages static hosting."
 # Always builds the full 5-target xcframework. The previous `swift-macos-
 # framework` macOS-only path used a hand-laid framework skeleton; with the
-# `xcodebuild -create-xcframework -library` build pipeline, all five targets
-# feed one xcframework invocation and there's no slim
+# generated static-framework pipeline, all five targets feed one xcframework
+# invocation and there's no slim
 # macOS-only fast-path worth maintaining separately.
 dependencies = ["swift-xcframework"]
 script_runner = "@shell"

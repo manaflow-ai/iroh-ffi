@@ -14,7 +14,7 @@ import Foundation
 //
 // Presence is keyed on the macOS slice's static lib. The whole xcframework
 // directory is gitignored (build artifact only — Apple regenerates it from
-// the cargo-built .a files via `xcodebuild -create-xcframework -library`),
+// cargo-built static frameworks via `xcodebuild -create-xcframework`),
 // so a fresh consumer checkout has nothing local to find and falls through
 // to the release zip. Set IROH_FORCE_REMOTE_XCFRAMEWORK to force the release
 // zip even in a built checkout.
@@ -30,10 +30,10 @@ let releaseChecksum = "514b147f7965fe17acaece9a1157cf9421463b6c9282224983e871ea8
 
 let packageDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
 let localBuiltBinaries = [
-    "Iroh.xcframework/macos-arm64_x86_64/libiroh_ffi.a",
-    "Iroh.xcframework/macos-x86_64_arm64/libiroh_ffi.a",
+    "Iroh.xcframework/macos-arm64_x86_64/Iroh.framework/Versions/A/Iroh",
+    "Iroh.xcframework/macos-x86_64_arm64/Iroh.framework/Versions/A/Iroh",
     // Continue recognizing locally built artifacts from before Intel support.
-    "Iroh.xcframework/macos-arm64/libiroh_ffi.a",
+    "Iroh.xcframework/macos-arm64/Iroh.framework/Versions/A/Iroh",
 ].map { packageDir.appendingPathComponent($0) }
 let forceRemote = ProcessInfo.processInfo.environment["IROH_FORCE_REMOTE_XCFRAMEWORK"] != nil
 let useLocalXcframework = !forceRemote

@@ -1,22 +1,18 @@
 set -eu
 
 # Builds the full 5-target Apple xcframework via `xcodebuild
-# -create-xcframework -library`. Prefer `cargo make swift-xcframework`.
+# -create-xcframework -framework`. Prefer `cargo make swift-xcframework`.
 #
-# Apple-blessed shape: each slice ships a flat `lib<name>.a` + `Headers/`
-# directory containing the uniffi-generated FFI header, an `Export.h`
-# umbrella, and a `module.modulemap` declaring the Swift-visible module
-# name (`Iroh`). xcodebuild infers per-slice metadata (platform, arch,
-# simulator vs device) from the .a's Mach-O headers and generates the
-# outer xcframework Info.plist.
+# Each slice ships a static `Iroh.framework`. Keeping Headers/ and
+# Modules/module.modulemap inside the named framework prevents Xcode from
+# installing Iroh's module map into the shared Products/include directory,
+# where it would collide with any other flat static-library XCFramework.
+# iOS frameworks use Apple's shallow layout; macOS uses the versioned deep
+# layout required by current Xcode releases.
 #
-# Replaces the historical "checked-in framework skeleton + cp binaries
-# into it" pattern, which forced per-Xcode-major hand-fixes of the
-# bundle layout (see iroh-ffi#247: Xcode 27 rejected the shallow
-# Info.plist layout iOS-style bundles use). With -library there is no
-# .framework directory at all — just lib.a + headers — so that whole
-# class of "bundle layout doesn't match the platform Apple expects"
-# bug disappears.
+# Frameworks are generated in target/ from scratch on every build. No bundle
+# skeleton is checked in, and `xcodebuild -create-xcframework` still derives
+# the outer AvailableLibraries metadata from the staged binaries.
 
 # Reproducible-build path normalization. Without this, every `.a` binary
 # embeds absolute paths from `file!()` macros (in deps, in iroh, and in
@@ -80,24 +76,47 @@ mkdir -p "$INCLUDE_DIR"
 # that names the module `Iroh` to match what the Swift consumer imports).
 cargo run --bin uniffi-bindgen generate --language swift --out-dir ./$INCLUDE_DIR --library "$TARGET_DIR/debug/lib${UDL_NAME}.dylib" --config uniffi.toml
 
-# Stage a single headers directory shared across all three slices — same
-# .h + module.modulemap, so xcodebuild copies the same Headers/ into each
-# slice. Export.h is a one-line umbrella so the modulemap can `umbrella
-# header "Export.h"` without uniffi-generated names leaking into the
-# module surface.
-HEADERS_STAGE="$TARGET_DIR/apple-xcf-headers"
-rm -rf "$HEADERS_STAGE"
-mkdir -p "$HEADERS_STAGE"
-cp "$INCLUDE_DIR/${UDL_NAME}FFI.h" "$HEADERS_STAGE/${UDL_NAME}FFI.h"
-cat > "$HEADERS_STAGE/Export.h" <<EOF
+# Stage framework metadata shared by all three platform slices. Export.h is
+# a one-line umbrella so the UniFFI-generated header name does not leak into
+# the Swift-visible module surface.
+FRAMEWORK_STAGE="$TARGET_DIR/apple-frameworks"
+rm -rf "$FRAMEWORK_STAGE"
+mkdir -p "$FRAMEWORK_STAGE/shared/Headers" "$FRAMEWORK_STAGE/shared/Modules"
+cp "$INCLUDE_DIR/${UDL_NAME}FFI.h" \
+  "$FRAMEWORK_STAGE/shared/Headers/${UDL_NAME}FFI.h"
+cat > "$FRAMEWORK_STAGE/shared/Headers/Export.h" <<EOF
 #include "${UDL_NAME}FFI.h"
 EOF
-cat > "$HEADERS_STAGE/module.modulemap" <<EOF
-module $FRAMEWORK_NAME {
+cat > "$FRAMEWORK_STAGE/shared/Modules/module.modulemap" <<EOF
+framework module $FRAMEWORK_NAME {
     umbrella header "Export.h"
     export *
     module * { export * }
 }
+EOF
+cat > "$FRAMEWORK_STAGE/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>$FRAMEWORK_NAME</string>
+    <key>CFBundleIdentifier</key>
+    <string>computer.iroh.$FRAMEWORK_NAME</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>$FRAMEWORK_NAME</string>
+    <key>CFBundlePackageType</key>
+    <string>FMWK</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+</dict>
+</plist>
 EOF
 
 # Fat lib for the iOS simulator slice. xcframework can carry one .a per
@@ -123,19 +142,46 @@ lipo -create \
     "$TARGET_DIR/x86_64-apple-darwin/release/lib${UDL_NAME}.a" \
     -output "$MACOS_FAT"
 
-# Assemble the xcframework. xcodebuild reads each .a's Mach-O headers to
-# determine platform + arch + (simulator vs device), and emits the outer
-# Info.plist + per-slice directories with the flat `lib<name>.a +
-# Headers/` layout. No .framework bundles anywhere — Apple regenerates
-# the AvailableLibraries metadata against the current Xcode SDK, so
-# future Xcode majors don't need a hand-fix of the layout.
+# Build shallow static frameworks for iOS device and Simulator.
+stage_shallow_framework() {
+  framework=$1
+  binary=$2
+  mkdir -p "$framework/Headers" "$framework/Modules"
+  cp "$FRAMEWORK_STAGE/Info.plist" "$framework/Info.plist"
+  cp "$FRAMEWORK_STAGE/shared/Headers/"* "$framework/Headers/"
+  cp "$FRAMEWORK_STAGE/shared/Modules/module.modulemap" "$framework/Modules/module.modulemap"
+  cp "$binary" "$framework/$FRAMEWORK_NAME"
+}
+
+IOS_FRAMEWORK="$FRAMEWORK_STAGE/ios/$FRAMEWORK_NAME.framework"
+IOS_SIM_FRAMEWORK="$FRAMEWORK_STAGE/ios-simulator/$FRAMEWORK_NAME.framework"
+stage_shallow_framework \
+  "$IOS_FRAMEWORK" \
+  "$TARGET_DIR/aarch64-apple-ios/release/lib${UDL_NAME}.a"
+stage_shallow_framework "$IOS_SIM_FRAMEWORK" "$SIM_FAT"
+
+# Build the versioned deep framework layout required on macOS. The public
+# top-level entries are symlinks into Versions/Current, matching system and
+# Xcode-produced macOS frameworks.
+MACOS_FRAMEWORK="$FRAMEWORK_STAGE/macos/$FRAMEWORK_NAME.framework"
+MACOS_VERSION="$MACOS_FRAMEWORK/Versions/A"
+mkdir -p "$MACOS_VERSION/Headers" "$MACOS_VERSION/Modules" "$MACOS_VERSION/Resources"
+cp "$FRAMEWORK_STAGE/Info.plist" "$MACOS_VERSION/Resources/Info.plist"
+cp "$FRAMEWORK_STAGE/shared/Headers/"* "$MACOS_VERSION/Headers/"
+cp "$FRAMEWORK_STAGE/shared/Modules/module.modulemap" "$MACOS_VERSION/Modules/module.modulemap"
+cp "$MACOS_FAT" "$MACOS_VERSION/$FRAMEWORK_NAME"
+ln -s A "$MACOS_FRAMEWORK/Versions/Current"
+ln -s "Versions/Current/$FRAMEWORK_NAME" "$MACOS_FRAMEWORK/$FRAMEWORK_NAME"
+ln -s Versions/Current/Headers "$MACOS_FRAMEWORK/Headers"
+ln -s Versions/Current/Modules "$MACOS_FRAMEWORK/Modules"
+ln -s Versions/Current/Resources "$MACOS_FRAMEWORK/Resources"
+
+# Assemble the xcframework. The contained binaries remain static archives;
+# the framework bundle scopes module metadata but adds no dynamic runtime.
 xcodebuild -create-xcframework \
-    -library "$TARGET_DIR/aarch64-apple-ios/release/lib${UDL_NAME}.a" \
-    -headers "$HEADERS_STAGE" \
-    -library "$SIM_FAT" \
-    -headers "$HEADERS_STAGE" \
-    -library "$MACOS_FAT" \
-    -headers "$HEADERS_STAGE" \
+    -framework "$IOS_FRAMEWORK" \
+    -framework "$IOS_SIM_FRAMEWORK" \
+    -framework "$MACOS_FRAMEWORK" \
     -output "$FRAMEWORK_NAME.xcframework"
 
 # Swift interface for the IrohLib SwiftPM target. uniffi emits references
