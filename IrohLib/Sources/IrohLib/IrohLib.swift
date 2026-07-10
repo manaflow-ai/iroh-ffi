@@ -2106,6 +2106,10 @@ public protocol EndpointProtocol: AnyObject, Sendable {
     
     /**
      * Insert (or replace) a relay configuration at runtime.
+     *
+     * Replacing the configuration for an active relay restarts only that
+     * relay client so updated authentication takes effect. The endpoint's
+     * identity and existing QUIC connections remain intact.
      */
     func insertRelay(config: RelayConfig) async throws 
     
@@ -2420,6 +2424,10 @@ open func id() -> EndpointId  {
     
     /**
      * Insert (or replace) a relay configuration at runtime.
+     *
+     * Replacing the configuration for an active relay restarts only that
+     * relay client so updated authentication takes effect. The endpoint's
+     * identity and existing QUIC connections remain intact.
      */
 open func insertRelay(config: RelayConfig)async throws   {
     return
@@ -9589,7 +9597,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_iroh_ffi_checksum_method_endpoint_id() != 21819) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_iroh_ffi_checksum_method_endpoint_insert_relay() != 12359) {
+    if (uniffi_iroh_ffi_checksum_method_endpoint_insert_relay() != 29865) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_iroh_ffi_checksum_method_endpoint_is_closed() != 32495) {

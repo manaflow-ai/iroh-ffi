@@ -555,6 +555,10 @@ impl Endpoint {
     }
 
     /// Insert (or replace) a relay configuration at runtime.
+    ///
+    /// Replacing the configuration for an active relay restarts only that
+    /// relay client so updated authentication takes effect. The endpoint's
+    /// identity and existing QUIC connections remain intact.
     #[uniffi::method(async_runtime = "tokio")]
     pub async fn insert_relay(&self, config: RelayConfig) -> Result<(), IrohError> {
         let config: iroh::RelayConfig = config.try_into()?;

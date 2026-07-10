@@ -441,6 +441,61 @@ final class EndpointTests: XCTestCase {
         try await server.close()
     }
 
+    func testRelayTokenReplacementPreservesEndpointAndConnection() async throws {
+        let server = try await Endpoint.bind(
+            options: EndpointOptions(
+                preset: presetN0(),
+                alpns: [ALPN],
+                relayMode: RelayMode.disabled()
+            )
+        )
+        let relayURL = "https://127.0.0.1:9/"
+        let relayMap = RelayMap.empty()
+        try relayMap.insert(
+            config: RelayConfig(url: relayURL, quicPort: nil, authToken: "token-a")
+        )
+        let client = try await Endpoint.bind(
+            options: EndpointOptions(
+                preset: presetN0(),
+                relayMode: RelayMode.custom(map: relayMap)
+            )
+        )
+
+        let serverTask = Task {
+            let nextIncoming = await server.acceptNext()
+            let incoming = try XCTUnwrap(nextIncoming)
+            let connection = try await incoming.accept().connect()
+            let stream = try await connection.acceptBi()
+            let message = try await stream.recv().readToEnd(sizeLimit: 64)
+            try await stream.send().writeAll(buf: message)
+            try await stream.send().finish()
+            _ = await connection.closed()
+        }
+
+        let connection = try await client.connect(addr: server.addr(), alpn: ALPN)
+        let endpointID = client.id()
+        let connectionID = connection.stableId()
+
+        try await client.insertRelay(
+            config: RelayConfig(url: relayURL, quicPort: nil, authToken: "token-b")
+        )
+
+        XCTAssertEqual(client.id(), endpointID)
+        XCTAssertEqual(connection.stableId(), connectionID)
+        XCTAssertNil(connection.closeReason())
+
+        let stream = try await connection.openBi()
+        try await stream.send().writeAll(buf: Data("after relay refresh".utf8))
+        try await stream.send().finish()
+        let echoed = try await stream.recv().readToEnd(sizeLimit: 64)
+        XCTAssertEqual(String(decoding: echoed, as: UTF8.self), "after relay refresh")
+
+        try connection.close(errorCode: 0, reason: Data("test complete".utf8))
+        _ = try await serverTask.value
+        try await client.close()
+        try await server.close()
+    }
+
     func testUniStream() async throws {
         let server = try await Endpoint.bind(
             options: EndpointOptions(
