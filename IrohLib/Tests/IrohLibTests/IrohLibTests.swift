@@ -4,6 +4,164 @@ import XCTest
 
 private let ALPN = Data("iroh-ffi/test/0".utf8)
 
+private enum TestConnectError: Error {
+    case cancelled
+}
+
+private final class AsyncGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var isOpen = false
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if isOpen {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                self.continuation = continuation
+                lock.unlock()
+            }
+        }
+    }
+
+    func open() {
+        lock.lock()
+        isOpen = true
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume()
+    }
+}
+
+private final class BlockingConnectAttempt: ConnectAttemptProtocol, @unchecked Sendable {
+    private let lock = NSLock()
+    private let started: XCTestExpectation?
+    private var continuation: CheckedContinuation<Connection, Error>?
+    private var isCancelled = false
+    private var connectCallCount = 0
+    private var cancelCallCount = 0
+
+    init(started: XCTestExpectation? = nil) {
+        self.started = started
+    }
+
+    func connect() async throws -> Connection {
+        try await withCheckedThrowingContinuation { continuation in
+            lock.lock()
+            connectCallCount += 1
+            let cancelled = isCancelled
+            if !cancelled {
+                self.continuation = continuation
+            }
+            lock.unlock()
+
+            started?.fulfill()
+            if cancelled {
+                continuation.resume(throwing: TestConnectError.cancelled)
+            }
+        }
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelCallCount += 1
+        isCancelled = true
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+
+        continuation?.resume(throwing: TestConnectError.cancelled)
+    }
+
+    func state() -> (connectCallCount: Int, cancelCallCount: Int, hasContinuation: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (connectCallCount, cancelCallCount, continuation != nil)
+    }
+}
+
+final class CancellableConnectTests: XCTestCase {
+    func testAlreadyCancelledTaskCancelsAttemptBeforeConnectStarts() async throws {
+        let ready = expectation(description: "task reached pre-connect gate")
+        let gate = AsyncGate()
+        let attempt = BlockingConnectAttempt()
+        let task = Task {
+            ready.fulfill()
+            await gate.wait()
+            return try await irohConnectWithTaskCancellation(attempt: attempt)
+        }
+
+        await fulfillment(of: [ready], timeout: 1)
+        task.cancel()
+        gate.open()
+
+        do {
+            _ = try await task.value
+            XCTFail("expected task cancellation")
+        } catch is CancellationError {
+            // Expected.
+        } catch {
+            XCTFail("expected CancellationError, got \(error)")
+        }
+
+        let state = attempt.state()
+        XCTAssertEqual(state.connectCallCount, 0)
+        XCTAssertEqual(state.cancelCallCount, 1)
+        XCTAssertFalse(state.hasContinuation)
+    }
+
+    func testTaskCancellationCancelsAttemptAndReleasesOperation() async throws {
+        let started = expectation(description: "connect operation started")
+        let attempt = BlockingConnectAttempt(started: started)
+        let task = Task {
+            try await irohConnectWithTaskCancellation(attempt: attempt)
+        }
+
+        await fulfillment(of: [started], timeout: 1)
+        task.cancel()
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            XCTFail("expected task cancellation")
+        } catch is CancellationError {
+            // Expected: the bridge maps the Rust-side cancellation error back
+            // to Swift's structured-concurrency cancellation.
+        } catch {
+            XCTFail("expected CancellationError, got \(error)")
+        }
+
+        let state = attempt.state()
+        XCTAssertEqual(state.connectCallCount, 1)
+        XCTAssertEqual(state.cancelCallCount, 1)
+        XCTAssertFalse(state.hasContinuation)
+    }
+
+    func testRustAttemptCanBeCancelledBeforeLookup() async throws {
+        let endpoint = try await Endpoint.bind(options: EndpointOptions(preset: presetMinimal()))
+        let remoteID = SecretKey.generate().`public`()
+        let remote = EndpointAddr(id: remoteID, relayUrl: nil, addresses: [])
+        let attempt = try endpoint.beginConnect(addr: remote, alpn: ALPN)
+
+        attempt.cancel()
+        attempt.cancel()
+
+        do {
+            _ = try await attempt.connect()
+            XCTFail("expected cancelled Rust connection attempt")
+        } catch let error as IrohError {
+            XCTAssertTrue(error.message().contains("outgoing connection cancelled"))
+        } catch {
+            XCTFail("expected IrohError, got \(error)")
+        }
+
+        try await endpoint.close()
+    }
+}
+
 final class AppleBackDeploymentTests: XCTestCase {
     func testNetworkPathShimIsLinkedAndForwardsWhenAvailable() throws {
         let symbolName = "nw_path_is_ultra_constrained"
