@@ -62,5 +62,11 @@ tokio = { version = "1", features = ["full"] }
 cc = "1"
 uniffi = { version = "0.31.1", features = ["build"] }
 
+[patch.crates-io]
+iroh = { git = "https://github.com/manaflow-ai/iroh.git", rev = "726cef36b80ea5503944aed96ab1a23e4d6c97af" }
+iroh-base = { git = "https://github.com/manaflow-ai/iroh.git", rev = "726cef36b80ea5503944aed96ab1a23e4d6c97af" }
+iroh-dns = { git = "https://github.com/manaflow-ai/iroh.git", rev = "726cef36b80ea5503944aed96ab1a23e4d6c97af" }
+iroh-relay = { git = "https://github.com/manaflow-ai/iroh.git", rev = "726cef36b80ea5503944aed96ab1a23e4d6c97af" }
+
 [profile.release]
 lto = true
