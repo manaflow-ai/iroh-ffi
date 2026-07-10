@@ -9,6 +9,34 @@ import sys
 
 SIGNATURE = "open func connect(addr: EndpointAddr, alpn: Data)async throws  -> Connection  {"
 BRIDGE_CALL = "irohConnectWithTaskCancellation(attempt: attempt)"
+CONNECT_ATTEMPT_START = "public protocol ConnectAttemptProtocol"
+CONNECT_ATTEMPT_END = "/**\n * A client-side handshake in progress."
+BEGIN_CONNECT_DOC = """    /**
+     * Create a cancellable outgoing connection attempt without starting any
+     * address lookup or network I/O.
+     */"""
+
+
+def normalize_generated_additions(source: str) -> str:
+    """Keep the post-processed additions stable across repeated generation."""
+    start = source.index(CONNECT_ATTEMPT_START)
+    end = source.index(CONNECT_ATTEMPT_END, start)
+    generated_attempt = "\n".join(
+        line.rstrip() for line in source[start:end].split("\n")
+    )
+    source = source[:start] + generated_attempt + source[end:]
+
+    source = source.replace(
+        "    func addr()  -> EndpointAddr\n    \n" + BEGIN_CONNECT_DOC,
+        "    func addr()  -> EndpointAddr\n\n" + BEGIN_CONNECT_DOC,
+        1,
+    )
+    source = source.replace(
+        "})\n}\n    \n" + BEGIN_CONNECT_DOC,
+        "})\n}\n\n" + BEGIN_CONNECT_DOC,
+        1,
+    )
+    return source.rstrip() + "\n"
 
 
 def patch(path: pathlib.Path) -> None:
@@ -21,17 +49,19 @@ def patch(path: pathlib.Path) -> None:
     original = source[start:end]
     if BRIDGE_CALL in original:
         print(f"Swift cancellation bridge already present in {path}")
-        return
-    if "uniffi_iroh_ffi_fn_method_endpoint_connect" not in original:
-        sys.exit(f"Endpoint.connect in {path} no longer matches UniFFI output")
+    else:
+        if "uniffi_iroh_ffi_fn_method_endpoint_connect" not in original:
+            sys.exit(f"Endpoint.connect in {path} no longer matches UniFFI output")
 
-    replacement = f"""{SIGNATURE}
+        replacement = f"""{SIGNATURE}
     let attempt = try beginConnect(addr: addr, alpn: alpn)
     return try await {BRIDGE_CALL}
 }}
 """
-    path.write_text(source[:start] + replacement + source[end:])
-    print(f"Patched Swift Task cancellation into {path}")
+        source = source[:start] + replacement + source[end:]
+        print(f"Patched Swift Task cancellation into {path}")
+
+    path.write_text(normalize_generated_additions(source))
 
 
 def main() -> None:
