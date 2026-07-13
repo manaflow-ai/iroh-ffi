@@ -30,16 +30,17 @@ remote SwiftPM checkout request an asset that does not exist.
 
 Use this two-phase sequence for the first fork release:
 
-1. Merge the universal-Apple work while `Package.swift` still names the
-   published upstream `v1.0.0` asset.
+1. Start from the exact reviewed universal-Apple commit while `Package.swift`
+   still names the published upstream `v1.0.0` asset. The source PR may remain
+   unmerged while cmux dogfoods the binary, so the release branch must name the
+   reviewed commit explicitly.
 2. Prepare the fork manifest only on its release branch:
 
    ```sh
-   git switch main
-   git pull --ff-only
+   git switch --detach b1e22ad6a57e4738848897e5b08a9d789ae4a614
    git switch -c release/v1.0.0-cmux.2
    cargo make prepare-swift-fork-release 1.0.0-cmux.2
-   git add Package.swift
+   git add Package.swift RELEASING.md
    git commit -m "chore(release): prepare Swift v1.0.0-cmux.2"
    git push -u origin release/v1.0.0-cmux.2
    ```
