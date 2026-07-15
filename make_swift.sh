@@ -159,6 +159,11 @@ stage_shallow_framework \
   "$IOS_FRAMEWORK" \
   "$TARGET_DIR/aarch64-apple-ios/release/lib${UDL_NAME}.a"
 stage_shallow_framework "$IOS_SIM_FRAMEWORK" "$SIM_FAT"
+for framework in "$IOS_FRAMEWORK" "$IOS_SIM_FRAMEWORK"; do
+  plutil -insert MinimumOSVersion \
+    -string "$IPHONEOS_DEPLOYMENT_TARGET" \
+    "$framework/Info.plist"
+done
 
 # Build the versioned deep framework layout required on macOS. The public
 # top-level entries are symlinks into Versions/Current, matching system and
@@ -167,6 +172,9 @@ MACOS_FRAMEWORK="$FRAMEWORK_STAGE/macos/$FRAMEWORK_NAME.framework"
 MACOS_VERSION="$MACOS_FRAMEWORK/Versions/A"
 mkdir -p "$MACOS_VERSION/Headers" "$MACOS_VERSION/Modules" "$MACOS_VERSION/Resources"
 cp "$FRAMEWORK_STAGE/Info.plist" "$MACOS_VERSION/Resources/Info.plist"
+plutil -insert LSMinimumSystemVersion \
+  -string "$MACOSX_DEPLOYMENT_TARGET" \
+  "$MACOS_VERSION/Resources/Info.plist"
 cp "$FRAMEWORK_STAGE/shared/Headers/"* "$MACOS_VERSION/Headers/"
 cp "$FRAMEWORK_STAGE/shared/Modules/module.modulemap" "$MACOS_VERSION/Modules/module.modulemap"
 cp "$MACOS_FAT" "$MACOS_VERSION/$FRAMEWORK_NAME"
