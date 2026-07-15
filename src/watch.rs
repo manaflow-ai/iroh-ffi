@@ -62,10 +62,11 @@ impl WatchHandle {
 }
 
 pub(crate) fn spawn_watch_addr(
+    runtime: &tokio::runtime::Handle,
     endpoint: iroh::Endpoint,
     cb: Arc<dyn AddrChangeCallback>,
 ) -> WatchHandle {
-    let task = n0_future::task::spawn(async move {
+    let task = runtime.spawn(async move {
         let mut stream = endpoint.watch_addr().stream();
         while let Some(addr) = stream.next().await {
             let mapped: EndpointAddr = addr.into();
@@ -79,10 +80,11 @@ pub(crate) fn spawn_watch_addr(
 }
 
 pub(crate) fn spawn_home_relay_watch(
+    runtime: &tokio::runtime::Handle,
     endpoint: iroh::Endpoint,
     cb: Arc<dyn HomeRelayCallback>,
 ) -> WatchHandle {
-    let task = n0_future::task::spawn(async move {
+    let task = runtime.spawn(async move {
         let mut stream = endpoint.home_relay_status().stream();
         while let Some(statuses) = stream.next().await {
             let urls: Vec<String> = statuses.into_iter().map(|s| s.url().to_string()).collect();
@@ -96,10 +98,11 @@ pub(crate) fn spawn_home_relay_watch(
 }
 
 pub(crate) fn spawn_network_change_watch(
+    runtime: &tokio::runtime::Handle,
     endpoint: iroh::Endpoint,
     cb: Arc<dyn NetworkChangeCallback>,
 ) -> WatchHandle {
-    let task = n0_future::task::spawn(async move {
+    let task = runtime.spawn(async move {
         loop {
             endpoint.network_change().await;
             if let Err(err) = cb.on_change().await {

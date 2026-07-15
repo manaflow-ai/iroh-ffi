@@ -1,10 +1,11 @@
-use std::{collections::HashMap, fmt::Debug, str::FromStr, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, future::Future, str::FromStr, sync::Arc};
 
 use iroh::{
     endpoint::{self, presets, presets::Preset as _},
     protocol::AcceptError,
 };
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     AddrChangeCallback, CallbackError, Connecting, EndpointAddr, EndpointId, HomeRelayCallback,
@@ -26,6 +27,8 @@ pub struct EndpointBuilder {
 
 impl EndpointBuilder {
     pub(crate) fn from_inner(builder: iroh::endpoint::Builder) -> Self {
+        #[cfg(any(target_os = "ios", target_os = "macos"))]
+        crate::apple_compat::ensure_linked();
         Self {
             inner: std::sync::Mutex::new(Some(builder)),
         }
@@ -38,6 +41,39 @@ impl EndpointBuilder {
         let mut guard = self.inner.lock().unwrap();
         let builder = guard.take().expect("EndpointBuilder consumed");
         *guard = Some(f(builder));
+    }
+
+    fn set_port_mapping_enabled(&self, enabled: bool) {
+        let config = if enabled {
+            iroh::endpoint::PortmapperConfig::default()
+        } else {
+            iroh::endpoint::PortmapperConfig::Disabled
+        };
+        self.map(move |builder| builder.portmapper_config(config));
+    }
+
+    fn set_defer_nat_traversal_until_authorized(&self, defer: bool) {
+        self.map(move |builder| builder.defer_nat_traversal_until_authorized(defer));
+    }
+
+    fn set_initial_incoming_stream_limits(
+        &self,
+        maximum_bidirectional: Option<u64>,
+        maximum_unidirectional: Option<u64>,
+    ) -> Result<(), IrohError> {
+        let mut config = endpoint::QuicTransportConfig::builder();
+        if let Some(count) = maximum_bidirectional {
+            config = config.max_concurrent_bidi_streams(
+                endpoint::VarInt::from_u64(count).map_err(anyhow::Error::from)?,
+            );
+        }
+        if let Some(count) = maximum_unidirectional {
+            config = config.max_concurrent_uni_streams(
+                endpoint::VarInt::from_u64(count).map_err(anyhow::Error::from)?,
+            );
+        }
+        self.map(move |builder| builder.transport_config(config.build()));
+        Ok(())
     }
 
     pub(crate) fn take_inner(&self) -> Result<iroh::endpoint::Builder, IrohError> {
@@ -200,6 +236,26 @@ pub struct EndpointOptions {
     /// supplied handlers.
     #[uniffi(default = None)]
     pub protocols: Option<HashMap<Vec<u8>, Arc<dyn ProtocolCreator>>>,
+    /// Override UPnP, PCP, and NAT-PMP gateway port mapping. `None` preserves
+    /// the chosen preset / iroh default; `Some(false)` skips SSDP and gateway
+    /// probing while retaining direct connections, hole punching, and relays.
+    #[uniffi(default = None)]
+    pub port_mapping_enabled: Option<bool>,
+    /// Defers local candidate advertisement, remote candidate processing, probing,
+    /// and path migration on each connection until that exact connection is
+    /// explicitly authorized. `None` preserves iroh's default (`false`).
+    #[uniffi(default = None)]
+    pub defer_nat_traversal_until_authorized: Option<bool>,
+    /// Initial peer-created bidirectional stream credit advertised in the QUIC
+    /// transport parameters. Set this to zero when admission must precede every
+    /// peer-created application stream.
+    #[uniffi(default = None)]
+    pub initial_max_concurrent_bi_streams: Option<u64>,
+    /// Initial peer-created unidirectional stream credit advertised in the QUIC
+    /// transport parameters. Set this to zero when admission must precede every
+    /// peer-created application stream.
+    #[uniffi(default = None)]
+    pub initial_max_concurrent_uni_streams: Option<u64>,
 }
 
 #[uniffi::export(with_foreign)]
@@ -272,6 +328,84 @@ pub struct ConnectionStats {
 pub struct Endpoint {
     inner: endpoint::Endpoint,
     router: Option<iroh::protocol::Router>,
+    /// Runtime entered by the async FFI constructor. Synchronous watcher
+    /// registration may run on an arbitrary foreign thread, so it must spawn
+    /// through this handle rather than ambient Tokio thread-local state.
+    runtime: tokio::runtime::Handle,
+}
+
+const CONNECT_CANCELLED_MESSAGE: &str = "outgoing connection cancelled";
+
+async fn await_outgoing_connect<T, F>(
+    cancellation: &CancellationToken,
+    operation: F,
+) -> Result<T, IrohError>
+where
+    F: Future<Output = Result<T, IrohError>>,
+{
+    tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => {
+            Err(anyhow::anyhow!(CONNECT_CANCELLED_MESSAGE).into())
+        }
+        result = operation => result,
+    }
+}
+
+/// A cancellable outgoing connection attempt.
+///
+/// Creation is synchronous and performs no network work. [`Self::connect`]
+/// covers both iroh address lookup and the QUIC handshake with one
+/// cancellation token. Calling [`Self::cancel`] more than once is safe, and
+/// dropping the final handle also cancels the token.
+#[derive(uniffi::Object)]
+pub struct ConnectAttempt {
+    endpoint: endpoint::Endpoint,
+    addr: iroh::EndpointAddr,
+    alpn: Vec<u8>,
+    cancellation: CancellationToken,
+    runtime: tokio::runtime::Handle,
+}
+
+impl ConnectAttempt {
+    fn new(
+        endpoint: endpoint::Endpoint,
+        addr: iroh::EndpointAddr,
+        alpn: Vec<u8>,
+        runtime: tokio::runtime::Handle,
+    ) -> Self {
+        Self {
+            endpoint,
+            addr,
+            alpn,
+            cancellation: CancellationToken::new(),
+            runtime,
+        }
+    }
+}
+
+#[uniffi::export]
+impl ConnectAttempt {
+    /// Run address lookup and the QUIC handshake, unless cancelled first.
+    #[uniffi::method(async_runtime = "tokio")]
+    pub async fn connect(&self) -> Result<Connection, IrohError> {
+        await_outgoing_connect(&self.cancellation, async {
+            let connection = self.endpoint.connect(self.addr.clone(), &self.alpn).await?;
+            Ok(Connection(connection, self.runtime.clone()))
+        })
+        .await
+    }
+
+    /// Cancel this attempt. This operation is synchronous and idempotent.
+    pub fn cancel(&self) {
+        self.cancellation.cancel();
+    }
+}
+
+impl Drop for ConnectAttempt {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+    }
 }
 
 impl Endpoint {
@@ -279,6 +413,7 @@ impl Endpoint {
         Endpoint {
             inner: ep,
             router: None,
+            runtime: tokio::runtime::Handle::current(),
         }
     }
 
@@ -311,14 +446,33 @@ impl Endpoint {
         if let Some(addr) = options.bind_addr {
             wrapper.bind_addr(addr)?;
         }
+        if let Some(enabled) = options.port_mapping_enabled {
+            wrapper.set_port_mapping_enabled(enabled);
+        }
+        if let Some(defer) = options.defer_nat_traversal_until_authorized {
+            wrapper.set_defer_nat_traversal_until_authorized(defer);
+        }
+        if options.initial_max_concurrent_bi_streams.is_some()
+            || options.initial_max_concurrent_uni_streams.is_some()
+        {
+            wrapper.set_initial_incoming_stream_limits(
+                options.initial_max_concurrent_bi_streams,
+                options.initial_max_concurrent_uni_streams,
+            )?;
+        }
 
         let builder = wrapper.take_inner()?;
         let endpoint = builder.bind().await?;
+        let runtime = tokio::runtime::Handle::current();
 
         let router = match options.protocols {
             Some(protocols) if !protocols.is_empty() => {
                 let mut router_builder = iroh::protocol::Router::builder(endpoint.clone());
-                let endpoint_wrapper = Arc::new(Endpoint::new(endpoint.clone()));
+                let endpoint_wrapper = Arc::new(Endpoint {
+                    inner: endpoint.clone(),
+                    router: None,
+                    runtime: runtime.clone(),
+                });
                 for (alpn, creator) in protocols {
                     let handler = creator.create(endpoint_wrapper.clone());
                     router_builder = router_builder.accept(alpn, ProtocolWrapper { handler });
@@ -331,6 +485,7 @@ impl Endpoint {
         Ok(Endpoint {
             inner: endpoint,
             router,
+            runtime,
         })
     }
 
@@ -383,9 +538,23 @@ impl Endpoint {
     /// Connect to a remote endpoint via the given ALPN.
     #[uniffi::method(async_runtime = "tokio")]
     pub async fn connect(&self, addr: &EndpointAddr, alpn: &[u8]) -> Result<Connection, IrohError> {
+        self.begin_connect(addr, alpn)?.connect().await
+    }
+
+    /// Create a cancellable outgoing connection attempt without starting any
+    /// address lookup or network I/O.
+    pub fn begin_connect(
+        &self,
+        addr: &EndpointAddr,
+        alpn: &[u8],
+    ) -> Result<Arc<ConnectAttempt>, IrohError> {
         let addr: iroh::EndpointAddr = addr.clone().try_into()?;
-        let conn = self.inner.connect(addr, alpn).await?;
-        Ok(Connection(conn))
+        Ok(Arc::new(ConnectAttempt::new(
+            self.inner.clone(),
+            addr,
+            alpn.to_vec(),
+            self.runtime.clone(),
+        )))
     }
 
     /// Shut down the endpoint (and, if present, the protocol router).
@@ -397,6 +566,12 @@ impl Endpoint {
             self.inner.close().await;
         }
         Ok(())
+    }
+
+    /// Wait until the endpoint closes, including an unexpected driver exit.
+    #[uniffi::method(async_runtime = "tokio")]
+    pub async fn closed(&self) {
+        self.inner.closed().await;
     }
 
     /// Returns true if the endpoint has been closed.
@@ -447,6 +622,10 @@ impl Endpoint {
     }
 
     /// Insert (or replace) a relay configuration at runtime.
+    ///
+    /// Replacing the configuration for an active relay restarts only that
+    /// relay client so updated authentication takes effect. The endpoint's
+    /// identity and existing QUIC connections remain intact.
     #[uniffi::method(async_runtime = "tokio")]
     pub async fn insert_relay(&self, config: RelayConfig) -> Result<(), IrohError> {
         let config: iroh::RelayConfig = config.try_into()?;
@@ -500,13 +679,21 @@ impl Endpoint {
     /// [`WatchHandle`] cancels the watcher when dropped or when its `stop()`
     /// method is called.
     pub fn watch_addr(&self, callback: Arc<dyn AddrChangeCallback>) -> Arc<WatchHandle> {
-        Arc::new(watch::spawn_watch_addr(self.inner.clone(), callback))
+        Arc::new(watch::spawn_watch_addr(
+            &self.runtime,
+            self.inner.clone(),
+            callback,
+        ))
     }
 
     /// Register a callback that fires whenever the list of relays this endpoint
     /// is currently connected to changes.
     pub fn watch_home_relay(&self, callback: Arc<dyn HomeRelayCallback>) -> Arc<WatchHandle> {
-        Arc::new(watch::spawn_home_relay_watch(self.inner.clone(), callback))
+        Arc::new(watch::spawn_home_relay_watch(
+            &self.runtime,
+            self.inner.clone(),
+            callback,
+        ))
     }
 
     /// Register a callback that fires every time the underlying network stack
@@ -516,6 +703,7 @@ impl Endpoint {
         callback: Arc<dyn NetworkChangeCallback>,
     ) -> Arc<WatchHandle> {
         Arc::new(watch::spawn_network_change_watch(
+            &self.runtime,
             self.inner.clone(),
             callback,
         ))
@@ -524,16 +712,32 @@ impl Endpoint {
 
 /// An active QUIC connection to a remote endpoint.
 #[derive(uniffi::Object)]
-pub struct Connection(endpoint::Connection);
+pub struct Connection(
+    endpoint::Connection,
+    /// Runtime entered when this connection crossed the async FFI boundary.
+    tokio::runtime::Handle,
+);
 
 impl From<endpoint::Connection> for Connection {
     fn from(value: endpoint::Connection) -> Self {
-        Self(value)
+        Self(value, tokio::runtime::Handle::current())
     }
 }
 
 #[uniffi::export]
 impl Connection {
+    /// Authorizes NAT traversal for this exact live connection.
+    ///
+    /// This call is one-way and idempotent. It has an effect only when the
+    /// endpoint was bound with deferred NAT traversal enabled. cmux authorizes
+    /// the client connection first, then authorizes the server connection only
+    /// after receiving the client's final application-level admission ACK.
+    #[uniffi::method(async_runtime = "tokio")]
+    pub async fn authorize_nat_traversal(&self) -> Result<(), IrohError> {
+        self.0.authorize_nat_traversal().await?;
+        Ok(())
+    }
+
     /// The ALPN protocol negotiated for this connection.
     pub fn alpn(&self) -> Vec<u8> {
         self.0.alpn().to_vec()
@@ -673,13 +877,17 @@ impl Connection {
     /// Register a callback that fires with the current set of open paths
     /// whenever the path list (or selected path) changes.
     pub fn watch_paths(&self, callback: Arc<dyn PathChangeCallback>) -> Arc<WatchHandle> {
-        Arc::new(path::spawn_paths_watch(self.0.clone(), callback))
+        Arc::new(path::spawn_paths_watch(&self.1, self.0.clone(), callback))
     }
 
     /// Register a callback that fires for each individual path event (path
     /// opened, closed, selected, or lagged).
     pub fn watch_path_events(&self, callback: Arc<dyn PathEventCallback>) -> Arc<WatchHandle> {
-        Arc::new(path::spawn_path_events_watch(self.0.clone(), callback))
+        Arc::new(path::spawn_path_events_watch(
+            &self.1,
+            self.0.clone(),
+            callback,
+        ))
     }
 
     /// Set the maximum number of concurrent incoming unidirectional streams.
@@ -867,7 +1075,136 @@ impl RecvStream {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        sync::{
+            Mutex as StdMutex,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
+
+    use iroh::address_lookup::{AddressLookup, EndpointData, Error as AddressLookupError, Item};
+    use n0_future::{StreamExt, boxed::BoxStream};
+    use tokio::sync::oneshot;
+
     use super::*;
+
+    struct OperationGuard {
+        active: Arc<AtomicUsize>,
+        dropped: Option<oneshot::Sender<()>>,
+    }
+
+    impl OperationGuard {
+        fn new(active: Arc<AtomicUsize>, dropped: oneshot::Sender<()>) -> Self {
+            active.fetch_add(1, Ordering::SeqCst);
+            Self {
+                active,
+                dropped: Some(dropped),
+            }
+        }
+    }
+
+    impl Drop for OperationGuard {
+        fn drop(&mut self) {
+            self.active.fetch_sub(1, Ordering::SeqCst);
+            if let Some(dropped) = self.dropped.take() {
+                let _ = dropped.send(());
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct HangingAddressLookup {
+        active: Arc<AtomicUsize>,
+        started: StdMutex<Option<oneshot::Sender<()>>>,
+        dropped: StdMutex<Option<oneshot::Sender<()>>>,
+    }
+
+    impl AddressLookup for HangingAddressLookup {
+        fn publish(&self, _data: &EndpointData) {}
+
+        fn resolve(
+            &self,
+            _endpoint_id: iroh::EndpointId,
+        ) -> Option<BoxStream<Result<Item, AddressLookupError>>> {
+            let active = self.active.clone();
+            let started = self.started.lock().unwrap().take()?;
+            let dropped = self.dropped.lock().unwrap().take()?;
+            let lookup = async move {
+                let _guard = OperationGuard::new(active, dropped);
+                let _ = started.send(());
+                std::future::pending::<Result<Item, AddressLookupError>>().await
+            };
+            Some(n0_future::stream::once_future(lookup).boxed())
+        }
+    }
+
+    fn assert_connect_cancelled<T>(result: Result<T, IrohError>) {
+        match result {
+            Err(error) => assert!(
+                error.message().contains(CONNECT_CANCELLED_MESSAGE),
+                "unexpected cancellation error: {error}"
+            ),
+            Ok(_) => panic!("connection operation completed after cancellation"),
+        }
+    }
+
+    struct NoopAddrChangeCallback;
+
+    #[async_trait::async_trait]
+    impl AddrChangeCallback for NoopAddrChangeCallback {
+        async fn on_change(&self, _addr: Arc<EndpointAddr>) -> Result<(), CallbackError> {
+            Ok(())
+        }
+    }
+
+    struct NoopHomeRelayCallback;
+
+    #[async_trait::async_trait]
+    impl HomeRelayCallback for NoopHomeRelayCallback {
+        async fn on_change(&self, _relay_urls: Vec<String>) -> Result<(), CallbackError> {
+            Ok(())
+        }
+    }
+
+    struct NoopNetworkChangeCallback;
+
+    #[async_trait::async_trait]
+    impl NetworkChangeCallback for NoopNetworkChangeCallback {
+        async fn on_change(&self) -> Result<(), CallbackError> {
+            Ok(())
+        }
+    }
+
+    struct NoopPathChangeCallback;
+
+    #[async_trait::async_trait]
+    impl PathChangeCallback for NoopPathChangeCallback {
+        async fn on_change(&self, _paths: Vec<PathSnapshot>) -> Result<(), CallbackError> {
+            Ok(())
+        }
+    }
+
+    struct NoopPathEventCallback;
+
+    #[async_trait::async_trait]
+    impl PathEventCallback for NoopPathEventCallback {
+        async fn on_event(&self, _event: crate::PathEvent) -> Result<(), CallbackError> {
+            Ok(())
+        }
+    }
+
+    fn collect_registration(
+        name: &'static str,
+        result: std::thread::Result<Arc<WatchHandle>>,
+        handles: &mut Vec<Arc<WatchHandle>>,
+        failures: &mut Vec<&'static str>,
+    ) {
+        match result {
+            Ok(handle) => handles.push(handle),
+            Err(_) => failures.push(name),
+        }
+    }
 
     /// A user-implemented [`Preset`]: minimal baseline + a custom ALPN.
     #[derive(Debug)]
@@ -909,6 +1246,253 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_bind_with_port_mapping_disabled() {
+        assert_eq!(EndpointOptions::default().port_mapping_enabled, None);
+        let options = EndpointOptions {
+            preset: Some(crate::preset_minimal()),
+            port_mapping_enabled: Some(false),
+            ..Default::default()
+        };
+        assert_eq!(options.port_mapping_enabled, Some(false));
+
+        let ep = Endpoint::bind(options).await.unwrap();
+        assert!(!ep.bound_sockets().is_empty(), "should have bound sockets");
+        ep.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_zero_initial_stream_credit_blocks_only_the_matching_live_connection() {
+        let defaults = EndpointOptions::default();
+        assert_eq!(defaults.initial_max_concurrent_bi_streams, None);
+        assert_eq!(defaults.initial_max_concurrent_uni_streams, None);
+
+        let server = Endpoint::bind(EndpointOptions {
+            preset: Some(crate::preset_minimal()),
+            alpns: Some(vec![TEST_ALPN.to_vec()]),
+            initial_max_concurrent_bi_streams: Some(0),
+            initial_max_concurrent_uni_streams: Some(0),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let server_addr = server.addr();
+
+        let client_a = Endpoint::bind(EndpointOptions {
+            preset: Some(crate::preset_minimal()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let server_accept_a = {
+            let server = server.clone();
+            tokio::spawn(async move {
+                server
+                    .accept_next()
+                    .await
+                    .expect("client A incoming")
+                    .accept()
+                    .await
+                    .unwrap()
+                    .connect()
+                    .await
+                    .unwrap()
+            })
+        };
+        let client_connection_a = client_a.connect(&server_addr, TEST_ALPN).await.unwrap();
+        let server_connection_a = server_accept_a.await.unwrap();
+
+        let client_b = Endpoint::bind(EndpointOptions {
+            preset: Some(crate::preset_minimal()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let server_accept_b = {
+            let server = server.clone();
+            tokio::spawn(async move {
+                server
+                    .accept_next()
+                    .await
+                    .expect("client B incoming")
+                    .accept()
+                    .await
+                    .unwrap()
+                    .connect()
+                    .await
+                    .unwrap()
+            })
+        };
+        let client_connection_b = client_b.connect(&server_addr, TEST_ALPN).await.unwrap();
+        let server_connection_b = server_accept_b.await.unwrap();
+
+        assert_eq!(server_connection_a.remote_id(), client_a.id());
+        assert_eq!(server_connection_b.remote_id(), client_b.id());
+        let client_connection_a_id = client_connection_a.stable_id();
+        let server_connection_a_id = server_connection_a.stable_id();
+
+        let mut client_a_bi = Box::pin(client_connection_a.open_bi());
+        let mut client_a_uni = Box::pin(client_connection_a.open_uni());
+        let mut client_b_bi = Box::pin(client_connection_b.open_bi());
+        let mut client_b_uni = Box::pin(client_connection_b.open_uni());
+
+        for blocked in [
+            tokio::time::timeout(Duration::from_millis(100), client_a_bi.as_mut())
+                .await
+                .is_err(),
+            tokio::time::timeout(Duration::from_millis(100), client_a_uni.as_mut())
+                .await
+                .is_err(),
+            tokio::time::timeout(Duration::from_millis(100), client_b_bi.as_mut())
+                .await
+                .is_err(),
+            tokio::time::timeout(Duration::from_millis(100), client_b_uni.as_mut())
+                .await
+                .is_err(),
+        ] {
+            assert!(blocked, "zero initial stream credit must block peer opens");
+        }
+
+        server_connection_a
+            .set_max_concurrent_bi_streams(1)
+            .unwrap();
+        let _client_a_bi = tokio::time::timeout(Duration::from_secs(1), client_a_bi.as_mut())
+            .await
+            .expect("client A bidirectional stream stayed blocked after credit")
+            .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), client_a_uni.as_mut())
+                .await
+                .is_err(),
+            "bidirectional credit must not unblock a unidirectional stream"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), client_b_bi.as_mut())
+                .await
+                .is_err(),
+            "credit on connection A must not unblock connection B"
+        );
+
+        server_connection_a
+            .set_max_concurrent_uni_streams(1)
+            .unwrap();
+        let _client_a_uni = tokio::time::timeout(Duration::from_secs(1), client_a_uni.as_mut())
+            .await
+            .expect("client A unidirectional stream stayed blocked after credit")
+            .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), client_b_uni.as_mut())
+                .await
+                .is_err(),
+            "credit on connection A must not unblock connection B"
+        );
+
+        assert_eq!(client_connection_a.stable_id(), client_connection_a_id);
+        assert_eq!(server_connection_a.stable_id(), server_connection_a_id);
+
+        drop(client_b_bi);
+        drop(client_b_uni);
+        client_connection_a.close(0, b"done").unwrap();
+        client_connection_b.close(0, b"done").unwrap();
+        client_a.close().await.unwrap();
+        client_b.close().await.unwrap();
+        server.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_deferred_nat_traversal_authorizes_the_exact_live_connection() {
+        assert_eq!(
+            EndpointOptions::default().defer_nat_traversal_until_authorized,
+            None
+        );
+
+        let server = Endpoint::bind(EndpointOptions {
+            preset: Some(crate::preset_n0()),
+            alpns: Some(vec![TEST_ALPN.to_vec()]),
+            relay_mode: Some(Arc::new(RelayMode::disabled())),
+            port_mapping_enabled: Some(false),
+            defer_nat_traversal_until_authorized: Some(true),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let server_addr = server.addr();
+
+        let server_accept = {
+            let server = server.clone();
+            tokio::spawn(async move {
+                server
+                    .accept_next()
+                    .await
+                    .expect("incoming")
+                    .accept()
+                    .await
+                    .unwrap()
+                    .connect()
+                    .await
+                    .unwrap()
+            })
+        };
+
+        let client = Endpoint::bind(EndpointOptions {
+            preset: Some(crate::preset_n0()),
+            relay_mode: Some(Arc::new(RelayMode::disabled())),
+            port_mapping_enabled: Some(false),
+            defer_nat_traversal_until_authorized: Some(true),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let client_connection = client.connect(&server_addr, TEST_ALPN).await.unwrap();
+        let server_connection = server_accept.await.unwrap();
+        let client_connection_id = client_connection.stable_id();
+        let server_connection_id = server_connection.stable_id();
+
+        // cmux's admission barrier authorizes the client first. The server follows only after
+        // receiving the client's final application-level acknowledgement.
+        client_connection.authorize_nat_traversal().await.unwrap();
+        client_connection.authorize_nat_traversal().await.unwrap();
+        server_connection.authorize_nat_traversal().await.unwrap();
+        server_connection.authorize_nat_traversal().await.unwrap();
+
+        assert_eq!(client_connection.stable_id(), client_connection_id);
+        assert_eq!(server_connection.stable_id(), server_connection_id);
+        let stream = client_connection.open_uni().await.unwrap();
+        stream.write_all(b"authorized").await.unwrap();
+        stream.finish().await.unwrap();
+        let received = server_connection
+            .accept_uni()
+            .await
+            .unwrap()
+            .read_to_end(32)
+            .await
+            .unwrap();
+        assert_eq!(received, b"authorized");
+
+        client_connection.close(0, b"done").unwrap();
+        server_connection.closed().await;
+        client.close().await.unwrap();
+        server.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_closed_resolves_after_explicit_close() {
+        let endpoint = Endpoint::bind(EndpointOptions {
+            preset: Some(crate::preset_minimal()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let waiter_endpoint = endpoint.clone();
+        let waiter = tokio::spawn(async move { waiter_endpoint.closed().await });
+
+        endpoint.close().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), waiter)
+            .await
+            .expect("endpoint.closed() did not resolve")
+            .expect("closed waiter panicked");
+    }
+
+    #[tokio::test]
     async fn test_builder_bind() {
         let builder = EndpointBuilder::new();
         builder.apply_minimal();
@@ -928,6 +1512,126 @@ mod tests {
             Err(e) => assert!(format!("{e}").contains("already consumed")),
             Ok(_) => panic!("expected error on second bind()"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_connect_cancelled_before_lookup_never_polls_operation() {
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        let operation_polled = Arc::new(AtomicBool::new(false));
+        let operation_probe = operation_polled.clone();
+
+        let result = await_outgoing_connect(&cancellation, async move {
+            operation_probe.store(true, Ordering::SeqCst);
+            std::future::pending::<Result<(), IrohError>>().await
+        })
+        .await;
+
+        assert_connect_cancelled(result);
+        assert!(!operation_polled.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn test_connect_cancelled_during_unresolved_lookup_drops_operation() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let (lookup_started_tx, lookup_started_rx) = oneshot::channel();
+        let (operation_dropped_tx, operation_dropped_rx) = oneshot::channel();
+        let lookup = HangingAddressLookup {
+            active: active.clone(),
+            started: StdMutex::new(Some(lookup_started_tx)),
+            dropped: StdMutex::new(Some(operation_dropped_tx)),
+        };
+        let inner = iroh::Endpoint::builder(presets::Minimal)
+            .address_lookup(lookup)
+            .bind()
+            .await
+            .unwrap();
+        let endpoint = Arc::new(Endpoint::new(inner));
+        let remote_key = crate::SecretKey::generate();
+        let remote_addr = EndpointAddr::new(&remote_key.public(), None, Vec::new());
+        let attempt = endpoint.begin_connect(&remote_addr, TEST_ALPN).unwrap();
+
+        let task_attempt = attempt.clone();
+        let task = tokio::spawn(async move { task_attempt.connect().await });
+
+        tokio::time::timeout(Duration::from_secs(3), lookup_started_rx)
+            .await
+            .expect("lookup phase timed out")
+            .expect("lookup phase did not start");
+        attempt.cancel();
+        let result = tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .expect("cancelled lookup did not finish")
+            .expect("connect task panicked");
+        assert_connect_cancelled(result);
+        tokio::time::timeout(Duration::from_secs(1), operation_dropped_rx)
+            .await
+            .expect("lookup drop timed out")
+            .expect("lookup future was not dropped");
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+        endpoint.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_connect_cancelled_during_handshake_leaves_no_task() {
+        let packet_sink = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let sink_addr = packet_sink.local_addr().unwrap();
+        let endpoint = Arc::new(
+            Endpoint::bind(EndpointOptions {
+                preset: Some(crate::preset_minimal()),
+                ..Default::default()
+            })
+            .await
+            .unwrap(),
+        );
+        let remote_key = crate::SecretKey::generate();
+        let remote_addr =
+            EndpointAddr::new(&remote_key.public(), None, vec![sink_addr.to_string()]);
+        let attempt = endpoint.begin_connect(&remote_addr, TEST_ALPN).unwrap();
+
+        let task_attempt = attempt.clone();
+        let task = tokio::spawn(async move { task_attempt.connect().await });
+
+        let mut packet = [0u8; 2048];
+        tokio::time::timeout(Duration::from_secs(3), packet_sink.recv_from(&mut packet))
+            .await
+            .expect("handshake did not send a packet")
+            .expect("failed to receive handshake packet");
+        attempt.cancel();
+        let result = tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .expect("cancelled handshake left a connect task running")
+            .expect("connect task panicked");
+        assert_connect_cancelled(result);
+        endpoint.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_connect_attempt_cancel_and_drop_are_idempotent() {
+        let endpoint = Endpoint::bind(EndpointOptions {
+            preset: Some(crate::preset_minimal()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let addr = endpoint.addr();
+
+        let cancelled_attempt = endpoint.begin_connect(&addr, TEST_ALPN).unwrap();
+        let cancelled_token = cancelled_attempt.cancellation.clone();
+        cancelled_attempt.cancel();
+        cancelled_attempt.cancel();
+        assert!(cancelled_token.is_cancelled());
+        assert_connect_cancelled(cancelled_attempt.connect().await);
+        drop(cancelled_attempt);
+        assert!(cancelled_token.is_cancelled());
+
+        let dropped_attempt = endpoint.begin_connect(&addr, TEST_ALPN).unwrap();
+        let dropped_token = dropped_attempt.cancellation.clone();
+        assert!(!dropped_token.is_cancelled());
+        drop(dropped_attempt);
+        assert!(dropped_token.is_cancelled());
+
+        endpoint.close().await.unwrap();
     }
 
     #[tokio::test]
@@ -952,6 +1656,116 @@ mod tests {
         ep.close().await.unwrap();
     }
 
+    #[tokio::test]
+    async fn test_watcher_registration_without_calling_thread_runtime() {
+        let server = Arc::new(
+            Endpoint::bind(EndpointOptions {
+                preset: Some(crate::preset_n0()),
+                alpns: Some(vec![TEST_ALPN.to_vec()]),
+                relay_mode: Some(Arc::new(RelayMode::disabled())),
+                ..Default::default()
+            })
+            .await
+            .unwrap(),
+        );
+        let client = Arc::new(
+            Endpoint::bind(EndpointOptions {
+                preset: Some(crate::preset_n0()),
+                relay_mode: Some(Arc::new(RelayMode::disabled())),
+                ..Default::default()
+            })
+            .await
+            .unwrap(),
+        );
+
+        let mut handles = Vec::new();
+        let mut failures = Vec::new();
+
+        let endpoint = client.clone();
+        collect_registration(
+            "Endpoint::watch_addr",
+            std::thread::spawn(move || endpoint.watch_addr(Arc::new(NoopAddrChangeCallback)))
+                .join(),
+            &mut handles,
+            &mut failures,
+        );
+
+        let endpoint = client.clone();
+        collect_registration(
+            "Endpoint::watch_home_relay",
+            std::thread::spawn(move || endpoint.watch_home_relay(Arc::new(NoopHomeRelayCallback)))
+                .join(),
+            &mut handles,
+            &mut failures,
+        );
+
+        let endpoint = client.clone();
+        collect_registration(
+            "Endpoint::watch_network_change",
+            std::thread::spawn(move || {
+                endpoint.watch_network_change(Arc::new(NoopNetworkChangeCallback))
+            })
+            .join(),
+            &mut handles,
+            &mut failures,
+        );
+
+        let accept_server = server.clone();
+        let accept_task = tokio::spawn(async move {
+            accept_server
+                .accept_next()
+                .await
+                .expect("incoming connection")
+                .accept()
+                .await
+                .expect("accepting connection")
+                .connect()
+                .await
+                .expect("server handshake")
+        });
+        let client_connection = Arc::new(
+            client
+                .connect(&server.addr(), TEST_ALPN)
+                .await
+                .expect("client handshake"),
+        );
+        let server_connection = accept_task.await.expect("accept task panicked");
+
+        let connection = client_connection.clone();
+        collect_registration(
+            "Connection::watch_paths",
+            std::thread::spawn(move || connection.watch_paths(Arc::new(NoopPathChangeCallback)))
+                .join(),
+            &mut handles,
+            &mut failures,
+        );
+
+        let connection = client_connection.clone();
+        collect_registration(
+            "Connection::watch_path_events",
+            std::thread::spawn(move || {
+                connection.watch_path_events(Arc::new(NoopPathEventCallback))
+            })
+            .join(),
+            &mut handles,
+            &mut failures,
+        );
+
+        for handle in handles {
+            handle.stop().await;
+        }
+        client_connection.close(0, b"test complete").unwrap();
+        server_connection.closed().await;
+        client.close().await.unwrap();
+        server.close().await.unwrap();
+
+        assert!(
+            failures.is_empty(),
+            "watcher registration panicked without an entered Tokio runtime: {}",
+            failures.join(", ")
+        );
+    }
+
     const TEST_ALPN: &[u8] = b"iroh-ffi/test/0";
 
     /// Full end-to-end: two endpoints, direct (no relay) connection, bi-stream
@@ -963,6 +1777,7 @@ mod tests {
             preset: Some(crate::preset_n0()),
             alpns: Some(vec![TEST_ALPN.to_vec()]),
             relay_mode: Some(Arc::new(RelayMode::disabled())),
+            port_mapping_enabled: Some(false),
             ..Default::default()
         })
         .await
@@ -997,6 +1812,7 @@ mod tests {
         let client = Endpoint::bind(EndpointOptions {
             preset: Some(crate::preset_n0()),
             relay_mode: Some(Arc::new(RelayMode::disabled())),
+            port_mapping_enabled: Some(false),
             ..Default::default()
         })
         .await

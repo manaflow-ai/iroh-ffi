@@ -20,6 +20,84 @@ CI never writes to `main`.
   `computer.iroh`).
 - `main` is green at the commit you want to release from.
 
+## cmux fork: safe Swift bootstrap
+
+cmux fork tags follow the embedded Iroh core compatibility line. n0 has no
+`iroh-ffi` v1.0.2 release, so the first cmux Swift artifact backed by Iroh core
+v1.0.2 is `v1.0.2-cmux.1`. The fork does not publish its Rust, npm, PyPI, or
+Maven packages, so their upstream `iroh-ffi` v1.0.0 version remains unchanged.
+
+`Package.swift` must continue resolving a published artifact while the next
+one is built. Do not change the default branch to a new fork tag with an old
+checksum. A fresh SwiftPM checkout would request an asset that does not exist.
+
+Use this two-phase sequence for each cmux Swift release:
+
+1. Start from a commit whose `Package.swift` names a published artifact.
+2. Prepare the next fork manifest only on its release branch:
+
+   ```sh
+   git switch main
+   git pull --ff-only
+   git switch -c release/v1.0.2-cmux.1
+   cargo make prepare-swift-fork-release 1.0.2-cmux.1
+   git add Package.swift
+   git commit -m "chore(release): prepare Swift v1.0.2-cmux.1"
+   git push -u origin release/v1.0.2-cmux.1
+   ```
+
+   This changes `releaseRepository` and `releaseTag`. The checksum remains the
+   previous value temporarily, so this branch must not be merged yet.
+3. Wait for `release_swift.yml`. It builds and verifies the five Apple slices,
+   commits the exact zip checksum back to the release branch, and uploads that
+   same zip to the draft `v1.0.0-cmux.2` release, and records a signed GitHub
+   build-provenance attestation for that exact archive.
+4. Verify the bot commit and draft asset independently:
+
+   ```sh
+   git fetch origin release/v1.0.2-cmux.1
+   rm -rf /tmp/iroh-ffi-swift-release-check
+   mkdir -p /tmp/iroh-ffi-swift-release-check
+   gh release download v1.0.2-cmux.1 \
+     --repo manaflow-ai/iroh-ffi \
+     --pattern IrohLib.xcframework.zip \
+     --dir /tmp/iroh-ffi-swift-release-check
+   gh attestation verify \
+     /tmp/iroh-ffi-swift-release-check/IrohLib.xcframework.zip \
+     --repo manaflow-ai/iroh-ffi
+   swift package compute-checksum \
+     /tmp/iroh-ffi-swift-release-check/IrohLib.xcframework.zip
+   git show origin/release/v1.0.2-cmux.1:Package.swift | \
+     grep 'let releaseChecksum'
+   ```
+
+   The two 64-character hashes must match. Also confirm the release branch
+   names `manaflow-ai/iroh-ffi` and `v1.0.2-cmux.1`.
+5. Tag the exact checksum commit before merging it. The tag workflow fails
+   closed if the verified draft is missing:
+
+   ```sh
+   RELEASE_COMMIT=$(git rev-parse origin/release/v1.0.2-cmux.1)
+   git tag v1.0.2-cmux.1 "$RELEASE_COMMIT"
+   git push origin v1.0.2-cmux.1
+   RUN_ID=$(gh run list --repo manaflow-ai/iroh-ffi \
+     --workflow release.yml --branch v1.0.2-cmux.1 --limit 1 \
+     --json databaseId --jq '.[0].databaseId')
+   gh run watch "$RUN_ID" --repo manaflow-ai/iroh-ffi
+   gh release view v1.0.2-cmux.1 \
+     --repo manaflow-ai/iroh-ffi \
+     --json isDraft,url
+   ```
+
+   Continue only when `isDraft` is `false`.
+6. Merge the release branch into `main` without changing `Package.swift`.
+   The default branch switches to the fork URL only after that URL is public,
+   so remote package resolution remains valid at every default-branch commit.
+
+Subsequent fork releases use the same order. Their starting manifest already
+points at the previous published fork asset, which provides the safe fallback
+while the next release branch is being built.
+
 ## Steps
 
 0. **Local dry-run** (recommended, macOS only — needs Xcode for the swift slot).

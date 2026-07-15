@@ -5,6 +5,8 @@
 # workflow's create-release job promotes that draft to published; the other
 # jobs then `gh release upload` the rest of the assets to the same release.
 # Single Swift build (in PR CI), no cross-host determinism requirement.
+# In the cmux fork, create-release is the only active job: all upstream
+# language publishers below are explicitly gated to n0-computer/iroh-ffi.
 
 name: release
 on:
@@ -25,14 +27,16 @@ permissions:
 jobs:
   # Tag-push publish: PR-CI (release_swift.yml) created a draft release with
   # the Swift xcframework zip already attached and the SHA already baked into
-  # Package.swift on main. Tag time, this job just promotes the draft to
-  # published (or creates fresh if no draft, e.g. a manual tag without a PR).
+  # Package.swift on the tagged release commit. At tag time, this job promotes
+  # the draft to published (or creates fresh if no draft, e.g. a manual tag).
   # Other jobs then `gh release upload` the rest of the assets.
   create-release:
     name: create-release
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
+      attestations: read
     outputs:
       release_version: ${{ env.RELEASE_VERSION }}
     steps:
@@ -43,7 +47,7 @@ jobs:
         echo "RELEASE_VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
         echo "version is: ${GITHUB_REF#refs/tags/}"
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       with:
         fetch-depth: 1
     - name: Promote draft release (or create fresh)
@@ -52,19 +56,43 @@ jobs:
         TAG: ${{ env.RELEASE_VERSION }}
       shell: bash
       run: |
-        set -eu
+        set -euo pipefail
         if gh release view "$TAG" --json isDraft -q .isDraft 2>/dev/null | grep -q true; then
+          if [ "${GITHUB_REPOSITORY}" = "manaflow-ai/iroh-ffi" ]; then
+            case "$TAG" in
+              v*-cmux.*) ;;
+              *) echo "ERROR: fork releases require a cmux-only tag" >&2; exit 1 ;;
+            esac
+            asset_dir=$(mktemp -d)
+            trap 'rm -rf "$asset_dir"' EXIT
+            gh release download "$TAG" \
+              --pattern IrohLib.xcframework.zip \
+              --dir "$asset_dir"
+            asset="$asset_dir/IrohLib.xcframework.zip"
+            test -s "$asset"
+            gh attestation verify "$asset" --repo "$GITHUB_REPOSITORY"
+            checksum=$(sha256sum "$asset" | cut -d' ' -f1)
+            grep -Fq "let releaseRepository = \"manaflow-ai/iroh-ffi\"" Package.swift
+            grep -Fq "let releaseTag = \"$TAG\"" Package.swift
+            grep -Fq "let releaseChecksum = \"$checksum\"" Package.swift
+          fi
           echo "Promoting existing draft $TAG to published"
           gh release edit "$TAG" --draft=false
-        elif ! gh release view "$TAG" >/dev/null 2>&1; then
+        elif gh release view "$TAG" >/dev/null 2>&1; then
+          echo "Release $TAG already published"
+        elif [ "${GITHUB_REPOSITORY}" = "manaflow-ai/iroh-ffi" ]; then
+          echo "ERROR: refusing to publish fork release $TAG without the verified Swift draft asset" >&2
+          exit 1
+        else
           echo "Creating fresh published release $TAG (no draft from release_swift.yml)"
           gh release create "$TAG" --title "$TAG" --notes ""
-        else
-          echo "Release $TAG already published"
         fi
 
+  # The cmux fork publishes only its Swift xcframework. Keep upstream's
+  # multi-language artifacts and Maven publication scoped to the n0 repo.
   build-and-publish-libs:
     name: Build & publish release libraries
+    if: github.repository == 'n0-computer/iroh-ffi'
     needs: create-release
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -149,6 +177,7 @@ jobs:
   # in the same jar under `lib/<abi>/`, where AGP merges them into APKs.
   build-kotlin-cdylib:
     name: Build Kotlin cdylib (${{ matrix.name }})
+    if: github.repository == 'n0-computer/iroh-ffi'
     needs: create-release
     timeout-minutes: 60
     runs-on: ${{ matrix.runner }}
@@ -192,6 +221,7 @@ jobs:
   # writes one `<abi>/libiroh_ffi.so` per target under the -o directory.
   build-kotlin-android:
     name: Build Kotlin Android cdylibs
+    if: github.repository == 'n0-computer/iroh-ffi'
     needs: create-release
     timeout-minutes: 60
     runs-on: [self-hosted, linux, X64]
@@ -231,6 +261,7 @@ jobs:
   # fails to merge from JAR, NDK API level too high for emulator, etc.
   verify-kotlin-android-consumer:
     name: Smoke Kotlin Android consumer (emulator)
+    if: github.repository == 'n0-computer/iroh-ffi'
     needs: [create-release, build-kotlin-android]
     timeout-minutes: 45
     # ubuntu-latest has /dev/kvm via nested-virt — required by the emulator
@@ -275,6 +306,7 @@ jobs:
 
   build-and-publish-kotlin:
     name: Publish Kotlin to Maven Central
+    if: github.repository == 'n0-computer/iroh-ffi'
     timeout-minutes: 30
     needs: [create-release, build-kotlin-cdylib, build-kotlin-android, verify-kotlin-android-consumer]
     runs-on: [self-hosted, linux, X64]

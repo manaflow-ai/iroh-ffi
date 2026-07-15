@@ -1,7 +1,19 @@
 use std::{env, fs, path::PathBuf};
 
 fn main() {
+    build_apple_compat();
     build_pc();
+}
+
+fn build_apple_compat() {
+    let target_triple = env::var("TARGET").unwrap();
+    if target_triple.contains("apple") || target_triple.contains("darwin") {
+        cc::Build::new()
+            .file("src/apple_compat.c")
+            .warnings(true)
+            .compile("iroh_ffi_apple_compat");
+        println!("cargo:rerun-if-changed=src/apple_compat.c");
+    }
 }
 
 fn build_pc() {

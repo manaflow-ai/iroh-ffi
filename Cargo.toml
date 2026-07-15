@@ -43,6 +43,7 @@ iroh-tickets = { version = "1.0.0" }
 n0-error = { version = "1.0.0" }
 thiserror = "2.0"
 tokio = "1.25.0"
+tokio-util = { version = "0.7", features = ["rt"] }
 uniffi = { version = "0.31.1", features = ["cli", "tokio"] }
 url = "2.4"
 tracing = "0.1.40"
@@ -58,7 +59,17 @@ tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 tokio = { version = "1", features = ["full"] }
 
 [build-dependencies]
+cc = "1"
 uniffi = { version = "0.31.1", features = ["build"] }
+
+[patch.crates-io]
+iroh = { git = "https://github.com/manaflow-ai/iroh.git", rev = "6b2c35ba9209dee17ef20b939804971ab71b938d" }
+iroh-base = { git = "https://github.com/manaflow-ai/iroh.git", rev = "6b2c35ba9209dee17ef20b939804971ab71b938d" }
+iroh-dns = { git = "https://github.com/manaflow-ai/iroh.git", rev = "6b2c35ba9209dee17ef20b939804971ab71b938d" }
+iroh-relay = { git = "https://github.com/manaflow-ai/iroh.git", rev = "6b2c35ba9209dee17ef20b939804971ab71b938d" }
+noq = { git = "https://github.com/manaflow-ai/noq.git", rev = "2271bbc25890f9577d2ce9bd0bb0f872af32e105" }
+noq-proto = { git = "https://github.com/manaflow-ai/noq.git", rev = "2271bbc25890f9577d2ce9bd0bb0f872af32e105" }
+noq-udp = { git = "https://github.com/manaflow-ai/noq.git", rev = "2271bbc25890f9577d2ce9bd0bb0f872af32e105" }
 
 [profile.release]
 lto = true

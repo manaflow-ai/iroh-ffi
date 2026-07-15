@@ -11,6 +11,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
@@ -29,19 +32,21 @@ jobs:
         name: [ubuntu-latest, macOS-arm-latest, windows-latest]
         include:
           - name: ubuntu-latest
-            runner: [self-hosted, linux, X64]
+            runner: ubuntu-latest
           - name: macOS-arm-latest
-            runner: [self-hosted, macOS, ARM64]
+            runner: macos-14
           - name: windows-latest
-            runner: [windows-latest]
+            runner: windows-latest
     steps:
-      - uses: actions/checkout@master
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          persist-credentials: false
           submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable 2026-07-09
         with:
+          toolchain: stable
           components: rustfmt, clippy
-      - uses: davidB/rust-cargo-make@v1
+      - uses: davidB/rust-cargo-make@184c522bf8152f601a20749ca36c742b57ba568b # v1
       - name: cargo make test-rust
         run: cargo make test-rust
 
@@ -50,11 +55,14 @@ jobs:
     name: fmt + clippy + docs
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@master
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable 2026-07-09
+        with:
+          toolchain: stable
           components: rustfmt, clippy
-      - uses: davidB/rust-cargo-make@v1
+      - uses: davidB/rust-cargo-make@184c522bf8152f601a20749ca36c742b57ba568b # v1
       - run: cargo make format-check
       - run: cargo make clippy
       - run: cargo make docs

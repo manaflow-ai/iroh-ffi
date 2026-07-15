@@ -1,7 +1,230 @@
+import Darwin
 import XCTest
 @testable import IrohLib
 
 private let ALPN = Data("iroh-ffi/test/0".utf8)
+
+private enum TestConnectError: Error {
+    case cancelled
+}
+
+private final class AsyncGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var isOpen = false
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if isOpen {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                self.continuation = continuation
+                lock.unlock()
+            }
+        }
+    }
+
+    func open() {
+        lock.lock()
+        isOpen = true
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume()
+    }
+}
+
+private final class BlockingConnectAttempt: ConnectAttemptProtocol, @unchecked Sendable {
+    private let lock = NSLock()
+    private let started: XCTestExpectation?
+    private var continuation: CheckedContinuation<Connection, Error>?
+    private var isCancelled = false
+    private var connectCallCount = 0
+    private var cancelCallCount = 0
+
+    init(started: XCTestExpectation? = nil) {
+        self.started = started
+    }
+
+    func connect() async throws -> Connection {
+        try await withCheckedThrowingContinuation { continuation in
+            lock.lock()
+            connectCallCount += 1
+            let cancelled = isCancelled
+            if !cancelled {
+                self.continuation = continuation
+            }
+            lock.unlock()
+
+            started?.fulfill()
+            if cancelled {
+                continuation.resume(throwing: TestConnectError.cancelled)
+            }
+        }
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelCallCount += 1
+        isCancelled = true
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+
+        continuation?.resume(throwing: TestConnectError.cancelled)
+    }
+
+    func state() -> (connectCallCount: Int, cancelCallCount: Int, hasContinuation: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (connectCallCount, cancelCallCount, continuation != nil)
+    }
+}
+
+private final class NoopAddrChangeCallback: AddrChangeCallback, @unchecked Sendable {
+    func onChange(addr _: EndpointAddr) async throws {}
+}
+
+private final class NoopHomeRelayCallback: HomeRelayCallback, @unchecked Sendable {
+    func onChange(relayUrls _: [String]) async throws {}
+}
+
+private final class NoopNetworkChangeCallback: NetworkChangeCallback, @unchecked Sendable {
+    func onChange() async throws {}
+}
+
+private final class NoopPathChangeCallback: PathChangeCallback, @unchecked Sendable {
+    func onChange(paths _: [PathSnapshot]) async throws {}
+}
+
+private final class NoopPathEventCallback: PathEventCallback, @unchecked Sendable {
+    func onEvent(event _: PathEvent) async throws {}
+}
+
+final class CancellableConnectTests: XCTestCase {
+    func testAlreadyCancelledTaskCancelsAttemptBeforeConnectStarts() async throws {
+        let ready = expectation(description: "task reached pre-connect gate")
+        let gate = AsyncGate()
+        let attempt = BlockingConnectAttempt()
+        let task = Task {
+            ready.fulfill()
+            await gate.wait()
+            return try await irohConnectWithTaskCancellation(attempt: attempt)
+        }
+
+        await fulfillment(of: [ready], timeout: 1)
+        task.cancel()
+        gate.open()
+
+        do {
+            _ = try await task.value
+            XCTFail("expected task cancellation")
+        } catch is CancellationError {
+            // Expected.
+        } catch {
+            XCTFail("expected CancellationError, got \(error)")
+        }
+
+        let state = attempt.state()
+        XCTAssertEqual(state.connectCallCount, 0)
+        XCTAssertEqual(state.cancelCallCount, 1)
+        XCTAssertFalse(state.hasContinuation)
+    }
+
+    func testTaskCancellationCancelsAttemptAndReleasesOperation() async throws {
+        let started = expectation(description: "connect operation started")
+        let attempt = BlockingConnectAttempt(started: started)
+        let task = Task {
+            try await irohConnectWithTaskCancellation(attempt: attempt)
+        }
+
+        await fulfillment(of: [started], timeout: 1)
+        task.cancel()
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            XCTFail("expected task cancellation")
+        } catch is CancellationError {
+            // Expected: the bridge maps the Rust-side cancellation error back
+            // to Swift's structured-concurrency cancellation.
+        } catch {
+            XCTFail("expected CancellationError, got \(error)")
+        }
+
+        let state = attempt.state()
+        XCTAssertEqual(state.connectCallCount, 1)
+        XCTAssertEqual(state.cancelCallCount, 1)
+        XCTAssertFalse(state.hasContinuation)
+    }
+
+    func testRustAttemptCanBeCancelledBeforeLookup() async throws {
+        let endpoint = try await Endpoint.bind(options: EndpointOptions(preset: presetMinimal()))
+        let remoteID = SecretKey.generate().`public`()
+        let remote = EndpointAddr(id: remoteID, relayUrl: nil, addresses: [])
+        let attempt = try endpoint.beginConnect(addr: remote, alpn: ALPN)
+
+        attempt.cancel()
+        attempt.cancel()
+
+        do {
+            _ = try await attempt.connect()
+            XCTFail("expected cancelled Rust connection attempt")
+        } catch let error as IrohError {
+            XCTAssertTrue(error.message().contains("outgoing connection cancelled"))
+        } catch {
+            XCTFail("expected IrohError, got \(error)")
+        }
+
+        try await endpoint.close()
+    }
+}
+
+final class AppleBackDeploymentTests: XCTestCase {
+    func testNetworkPathShimIsLinkedAndForwardsWhenAvailable() throws {
+        let symbolName = "nw_path_is_ultra_constrained"
+        let process = try XCTUnwrap(dlopen(nil, RTLD_LAZY))
+        defer { dlclose(process) }
+        let shim = try XCTUnwrap(
+            dlsym(process, symbolName),
+            "the compatibility definition must survive static linking"
+        )
+
+        let networkFramework = try XCTUnwrap(
+            dlopen(
+                "/System/Library/Frameworks/Network.framework/Network",
+                RTLD_LAZY | RTLD_LOCAL | RTLD_FIRST
+            )
+        )
+        defer { dlclose(networkFramework) }
+        let systemImplementation = dlsym(networkFramework, symbolName)
+
+        var symbolInfo = Dl_info()
+        XCTAssertNotEqual(dladdr(shim, &symbolInfo), 0)
+        let definingImage = String(cString: try XCTUnwrap(symbolInfo.dli_fname))
+
+        if #available(macOS 26.0, iOS 26.0, *) {
+            let systemImplementation = try XCTUnwrap(
+                systemImplementation,
+                "OS 26 and newer must provide the Network.framework implementation"
+            )
+            XCTAssertEqual(
+                UInt(bitPattern: shim),
+                UInt(bitPattern: systemImplementation),
+                "Network.framework's strong definition must replace the weak fallback"
+            )
+            XCTAssertTrue(definingImage.contains("Network.framework"), definingImage)
+        } else {
+            XCTAssertNil(
+                systemImplementation,
+                "older systems must use the compatibility definition's false fallback"
+            )
+            XCTAssertFalse(definingImage.contains("Network.framework"), definingImage)
+        }
+    }
+}
 
 final class KeyTests: XCTestCase {
     func testEndpointId() throws {
@@ -140,6 +363,97 @@ final class EndpointTests: XCTestCase {
         XCTAssertTrue(ep.isClosed())
     }
 
+    func testBindWithPortMappingDisabled() async throws {
+        XCTAssertNil(EndpointOptions().portMappingEnabled)
+        let options = EndpointOptions(
+            preset: presetMinimal(),
+            portMappingEnabled: false
+        )
+        XCTAssertEqual(options.portMappingEnabled, false)
+
+        let ep = try await Endpoint.bind(options: options)
+        XCTAssertFalse(ep.boundSockets().isEmpty)
+        try await ep.close()
+    }
+
+    func testBindWithInitialIncomingStreamCreditDisabled() async throws {
+        XCTAssertNil(EndpointOptions().initialMaxConcurrentBiStreams)
+        XCTAssertNil(EndpointOptions().initialMaxConcurrentUniStreams)
+        let endpoint = try await Endpoint.bind(
+            options: EndpointOptions(
+                preset: presetMinimal(),
+                initialMaxConcurrentBiStreams: 0,
+                initialMaxConcurrentUniStreams: 0
+            )
+        )
+
+        XCTAssertFalse(endpoint.boundSockets().isEmpty)
+        try await endpoint.close()
+    }
+
+    func testDeferredNATAuthorizationPreservesTheExactLiveConnection() async throws {
+        XCTAssertNil(EndpointOptions().deferNatTraversalUntilAuthorized)
+
+        let server = try await Endpoint.bind(
+            options: EndpointOptions(
+                preset: presetN0(),
+                alpns: [ALPN],
+                relayMode: RelayMode.disabled(),
+                portMappingEnabled: false,
+                deferNatTraversalUntilAuthorized: true
+            )
+        )
+        let serverAddress = server.addr()
+        let serverAccept = Task {
+            try await server.acceptNext()!.accept().connect()
+        }
+
+        let client = try await Endpoint.bind(
+            options: EndpointOptions(
+                preset: presetN0(),
+                relayMode: RelayMode.disabled(),
+                portMappingEnabled: false,
+                deferNatTraversalUntilAuthorized: true
+            )
+        )
+        let clientConnection = try await client.connect(addr: serverAddress, alpn: ALPN)
+        let serverConnection = try await serverAccept.value
+        let clientConnectionID = clientConnection.stableId()
+        let serverConnectionID = serverConnection.stableId()
+
+        // cmux authorizes the client first, then the server after its final admission ACK.
+        try await clientConnection.authorizeNatTraversal()
+        try await clientConnection.authorizeNatTraversal()
+        try await serverConnection.authorizeNatTraversal()
+        try await serverConnection.authorizeNatTraversal()
+
+        XCTAssertEqual(clientConnection.stableId(), clientConnectionID)
+        XCTAssertEqual(serverConnection.stableId(), serverConnectionID)
+        let send = try await clientConnection.openUni()
+        try await send.writeAll(buf: Data("authorized".utf8))
+        try await send.finish()
+        let received = try await serverConnection.acceptUni().readToEnd(sizeLimit: 32)
+        XCTAssertEqual(String(decoding: received, as: UTF8.self), "authorized")
+
+        try clientConnection.close(errorCode: 0, reason: Data("done".utf8))
+        _ = await serverConnection.closed()
+        try await client.close()
+        try await server.close()
+    }
+
+    func testClosedResolvesAfterExplicitClose() async throws {
+        let endpoint = try await Endpoint.bind(options: EndpointOptions(preset: presetMinimal()))
+        let closed = expectation(description: "endpoint closed signal")
+        let waiter = Task {
+            await endpoint.closed()
+            closed.fulfill()
+        }
+
+        try await endpoint.close()
+        await fulfillment(of: [closed], timeout: 1)
+        await waiter.value
+    }
+
     func testEndpointTicketRoundtrip() async throws {
         let ep = try await Endpoint.bind(options: EndpointOptions(preset: presetMinimal()))
         let addr = ep.addr()
@@ -160,14 +474,15 @@ final class EndpointTests: XCTestCase {
             options: EndpointOptions(
                 preset: presetN0(),
                 alpns: [ALPN],
-                relayMode: RelayMode.disabled()
+                relayMode: RelayMode.disabled(),
+                portMappingEnabled: false
             )
         )
         let serverAddr = server.addr()
         let serverId = server.id()
 
         let serverTask = Task {
-            let incoming = try await server.acceptNext()!
+            let incoming = await server.acceptNext()!
             let conn = try await incoming.accept().connect()
             XCTAssertEqual(conn.alpn(), ALPN)
             let bi = try await conn.acceptBi()
@@ -180,7 +495,11 @@ final class EndpointTests: XCTestCase {
         }
 
         let client = try await Endpoint.bind(
-            options: EndpointOptions(preset: presetN0(), relayMode: RelayMode.disabled())
+            options: EndpointOptions(
+                preset: presetN0(),
+                relayMode: RelayMode.disabled(),
+                portMappingEnabled: false
+            )
         )
         let conn = try await client.connect(addr: serverAddr, alpn: ALPN)
         XCTAssertEqual(conn.remoteId(), serverId)
@@ -205,6 +524,61 @@ final class EndpointTests: XCTestCase {
         try await server.close()
     }
 
+    func testRelayTokenReplacementPreservesEndpointAndConnection() async throws {
+        let server = try await Endpoint.bind(
+            options: EndpointOptions(
+                preset: presetN0(),
+                alpns: [ALPN],
+                relayMode: RelayMode.disabled()
+            )
+        )
+        let relayURL = "https://127.0.0.1:9/"
+        let relayMap = RelayMap.empty()
+        try relayMap.insert(
+            config: RelayConfig(url: relayURL, quicPort: nil, authToken: "token-a")
+        )
+        let client = try await Endpoint.bind(
+            options: EndpointOptions(
+                preset: presetN0(),
+                relayMode: RelayMode.custom(map: relayMap)
+            )
+        )
+
+        let serverTask = Task {
+            let nextIncoming = await server.acceptNext()
+            let incoming = try XCTUnwrap(nextIncoming)
+            let connection = try await incoming.accept().connect()
+            let stream = try await connection.acceptBi()
+            let message = try await stream.recv().readToEnd(sizeLimit: 64)
+            try await stream.send().writeAll(buf: message)
+            try await stream.send().finish()
+            _ = await connection.closed()
+        }
+
+        let connection = try await client.connect(addr: server.addr(), alpn: ALPN)
+        let endpointID = client.id()
+        let connectionID = connection.stableId()
+
+        try await client.insertRelay(
+            config: RelayConfig(url: relayURL, quicPort: nil, authToken: "token-b")
+        )
+
+        XCTAssertEqual(client.id(), endpointID)
+        XCTAssertEqual(connection.stableId(), connectionID)
+        XCTAssertNil(connection.closeReason())
+
+        let stream = try await connection.openBi()
+        try await stream.send().writeAll(buf: Data("after relay refresh".utf8))
+        try await stream.send().finish()
+        let echoed = try await stream.recv().readToEnd(sizeLimit: 64)
+        XCTAssertEqual(String(decoding: echoed, as: UTF8.self), "after relay refresh")
+
+        try connection.close(errorCode: 0, reason: Data("test complete".utf8))
+        _ = try await serverTask.value
+        try await client.close()
+        try await server.close()
+    }
+
     func testUniStream() async throws {
         let server = try await Endpoint.bind(
             options: EndpointOptions(
@@ -216,7 +590,7 @@ final class EndpointTests: XCTestCase {
         let serverAddr = server.addr()
 
         let serverTask = Task {
-            let incoming = try await server.acceptNext()!
+            let incoming = await server.acceptNext()!
             let conn = try await incoming.accept().connect()
             let recv = try await conn.acceptUni()
             let msg = try await recv.readToEnd(sizeLimit: 32)
@@ -232,6 +606,45 @@ final class EndpointTests: XCTestCase {
         try await send.finish()
 
         _ = try await serverTask.value
+        try await client.close()
+        try await server.close()
+    }
+
+    func testWatcherRegistrationDoesNotRequireCallingThreadTokioRuntime() async throws {
+        let server = try await Endpoint.bind(
+            options: EndpointOptions(
+                preset: presetN0(),
+                alpns: [ALPN],
+                relayMode: RelayMode.disabled()
+            )
+        )
+        let client = try await Endpoint.bind(
+            options: EndpointOptions(preset: presetN0(), relayMode: RelayMode.disabled())
+        )
+
+        let serverTask = Task {
+            let nextIncoming = await server.acceptNext()
+            let incoming = try XCTUnwrap(nextIncoming)
+            return try await incoming.accept().connect()
+        }
+        let clientConnection = try await client.connect(addr: server.addr(), alpn: ALPN)
+        let serverConnection = try await serverTask.value
+
+        // These generated methods are synchronous FFI calls, so the calling
+        // Swift thread has no entered Tokio runtime.
+        let handles = [
+            client.watchAddr(callback: NoopAddrChangeCallback()),
+            client.watchHomeRelay(callback: NoopHomeRelayCallback()),
+            client.watchNetworkChange(callback: NoopNetworkChangeCallback()),
+            clientConnection.watchPaths(callback: NoopPathChangeCallback()),
+            clientConnection.watchPathEvents(callback: NoopPathEventCallback()),
+        ]
+
+        for handle in handles {
+            await handle.stop()
+        }
+        try clientConnection.close(errorCode: 0, reason: Data("test complete".utf8))
+        _ = await serverConnection.closed()
         try await client.close()
         try await server.close()
     }

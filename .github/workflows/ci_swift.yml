@@ -18,15 +18,23 @@ env:
 jobs:
   swift:
     name: Swift - Full xcframework build + test (iOS + macOS)
-    timeout-minutes: 60
-    runs-on: [self-hosted, macOS, ARM64, xcode16]
+    timeout-minutes: 90
+    runs-on: macos-14
     steps:
-      - uses: actions/checkout@master
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with:
-          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios,aarch64-apple-darwin
-      - uses: Swatinem/rust-cache@v2
-      - uses: davidB/rust-cargo-make@v1
+          toolchain: 1.91.0
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios,aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: davidB/rust-cargo-make@d8952235ddd22b65d7c6b9194d4dbd58c3ffc48a # v1.14.0
+        with:
+          version: 0.37.24
+      - name: Assert ARM Sonoma runner
+        run: |
+          test "$(uname -m)" = arm64
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 14
+          sw_vers
       - name: cargo make test-swift
         # Builds the full Apple xcframework + runs the IrohLib test suite for
         # macOS via xcodebuild test.
@@ -40,3 +48,29 @@ jobs:
         # IrohLibTests on iOS runtime). Catches link errors + iOS-side runtime
         # regressions that macOS-only test-swift can't see.
         run: cargo make verify-swift-consumer
+
+  swift-intel-macos14:
+    name: Swift - Intel macOS 14 build + behavior test
+    timeout-minutes: 90
+    # GitHub retires macos-14-large on 2026-11-02. Move this exact Intel +
+    # Sonoma coverage to a managed Intel lab runner before that date.
+    runs-on: macos-14-large
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: 1.91.0
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios,aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: davidB/rust-cargo-make@d8952235ddd22b65d7c6b9194d4dbd58c3ffc48a # v1.14.0
+        with:
+          version: 0.37.24
+      - name: Assert Intel Sonoma runner
+        run: |
+          test "$(uname -m)" = x86_64
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 14
+          sw_vers
+      - name: Build universal xcframework + run macOS behavior tests
+        run: cargo make test-swift
+      - name: Verify shipped architectures
+        run: cargo make verify-swift-xcframework
