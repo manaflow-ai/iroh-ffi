@@ -273,7 +273,10 @@ for slice_dir in "$XCF"/*/; do
       binary="$framework/Versions/A/$FW"
       headers="$framework/Versions/A/Headers"
       modules="$framework/Versions/A/Modules"
-      [ -f "$framework/Versions/A/Resources/Info.plist" ] || err "$slice: missing versioned Info.plist"
+      plist="$framework/Versions/A/Resources/Info.plist"
+      [ -f "$plist" ] || err "$slice: missing versioned Info.plist"
+      minimum=$(plutil -extract LSMinimumSystemVersion raw -o - "$plist" 2>/dev/null || true)
+      [ "$minimum" = "14.0" ] || err "$slice: LSMinimumSystemVersion '$minimum', expected '14.0'"
       [ -L "$framework/Versions/Current" ] || err "$slice: Versions/Current is not a symlink"
       [ "$(readlink "$framework/Versions/Current" 2>/dev/null || true)" = A ] || err "$slice: Versions/Current does not point to A"
       [ -L "$framework/$FW" ] || err "$slice: top-level binary is not a symlink"
@@ -284,7 +287,10 @@ for slice_dir in "$XCF"/*/; do
       binary="$framework/$FW"
       headers="$framework/Headers"
       modules="$framework/Modules"
-      [ -f "$framework/Info.plist" ] || err "$slice: missing shallow Info.plist"
+      plist="$framework/Info.plist"
+      [ -f "$plist" ] || err "$slice: missing shallow Info.plist"
+      minimum=$(plutil -extract MinimumOSVersion raw -o - "$plist" 2>/dev/null || true)
+      [ "$minimum" = "17.5" ] || err "$slice: MinimumOSVersion '$minimum', expected '17.5'"
       [ ! -d "$framework/Versions" ] || err "$slice: iOS framework unexpectedly uses a versioned layout"
       ;;
   esac
