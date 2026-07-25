@@ -1635,6 +1635,264 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_connect_cancel_after_complete_closes_connection() {
+        let server = tokio::time::timeout(
+            Duration::from_secs(10),
+            Endpoint::bind(EndpointOptions {
+                preset: Some(crate::preset_n0()),
+                alpns: Some(vec![TEST_ALPN.to_vec()]),
+                relay_mode: Some(Arc::new(RelayMode::disabled())),
+                port_mapping_enabled: Some(false),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("server bind timed out")
+        .unwrap();
+        let server_addr = server.addr();
+        let client = tokio::time::timeout(
+            Duration::from_secs(10),
+            Endpoint::bind(EndpointOptions {
+                preset: Some(crate::preset_n0()),
+                relay_mode: Some(Arc::new(RelayMode::disabled())),
+                port_mapping_enabled: Some(false),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("client bind timed out")
+        .unwrap();
+
+        // A pre-cancelled biased select must drop an already completed connection.
+        let (established_tx, established_rx) = oneshot::channel();
+        let server_task = {
+            let server = server.clone();
+            tokio::spawn(async move {
+                let incoming = tokio::time::timeout(Duration::from_secs(10), server.accept_next())
+                    .await
+                    .expect("phase A server accept timed out")
+                    .expect("phase A incoming");
+                let accepting = tokio::time::timeout(Duration::from_secs(10), incoming.accept())
+                    .await
+                    .expect("phase A incoming accept timed out")
+                    .unwrap();
+                let conn = tokio::time::timeout(Duration::from_secs(10), accepting.connect())
+                    .await
+                    .expect("phase A server handshake timed out")
+                    .unwrap();
+                let _ = established_tx.send(());
+                tokio::time::timeout(Duration::from_secs(10), conn.closed())
+                    .await
+                    .expect("phase A server connection did not close");
+            })
+        };
+        let conn = tokio::time::timeout(
+            Duration::from_secs(10),
+            client.connect(&server_addr, TEST_ALPN),
+        )
+        .await
+        .expect("phase A client handshake timed out")
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(10), established_rx)
+            .await
+            .expect("phase A establishment timed out")
+            .expect("phase A server dropped establishment signal");
+
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            await_outgoing_connect(
+                &cancellation,
+                async move { Ok::<Connection, IrohError>(conn) },
+            ),
+        )
+        .await
+        .expect("phase A cancellation timed out");
+        assert_connect_cancelled(result);
+        tokio::time::timeout(Duration::from_secs(5), server_task)
+            .await
+            .expect("phase A dropped connection stayed open")
+            .expect("phase A server task panicked");
+
+        // Cancelling the public attempt after completion is benign; dropping the
+        // returned final handle still closes the peer's QUIC connection.
+        let (established_tx, established_rx) = oneshot::channel();
+        let server_task = {
+            let server = server.clone();
+            tokio::spawn(async move {
+                let incoming = tokio::time::timeout(Duration::from_secs(10), server.accept_next())
+                    .await
+                    .expect("phase B server accept timed out")
+                    .expect("phase B incoming");
+                let accepting = tokio::time::timeout(Duration::from_secs(10), incoming.accept())
+                    .await
+                    .expect("phase B incoming accept timed out")
+                    .unwrap();
+                let conn = tokio::time::timeout(Duration::from_secs(10), accepting.connect())
+                    .await
+                    .expect("phase B server handshake timed out")
+                    .unwrap();
+                let _ = established_tx.send(());
+                tokio::time::timeout(Duration::from_secs(10), conn.closed())
+                    .await
+                    .expect("phase B server connection did not close");
+            })
+        };
+        let attempt = client.begin_connect(&server_addr, TEST_ALPN).unwrap();
+        let task_attempt = attempt.clone();
+        let task = tokio::spawn(async move { task_attempt.connect().await });
+        let conn = tokio::time::timeout(Duration::from_secs(10), task)
+            .await
+            .expect("phase B client handshake timed out")
+            .expect("phase B connect task panicked")
+            .expect("phase B connect failed");
+        tokio::time::timeout(Duration::from_secs(10), established_rx)
+            .await
+            .expect("phase B establishment timed out")
+            .expect("phase B server dropped establishment signal");
+        attempt.cancel();
+        drop(conn);
+        tokio::time::timeout(Duration::from_secs(5), server_task)
+            .await
+            .expect("phase B dropped connection stayed open")
+            .expect("phase B server task panicked");
+
+        tokio::time::timeout(Duration::from_secs(10), client.close())
+            .await
+            .expect("client close timed out")
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(10), server.close())
+            .await
+            .expect("server close timed out")
+            .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_connect_cancel_complete_stress() {
+        fn splitmix64(state: &mut u64) -> u64 {
+            *state = state.wrapping_add(0x9e3779b97f4a7c15);
+            let mut value = *state;
+            value = (value ^ (value >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+            value = (value ^ (value >> 27)).wrapping_mul(0x94d049bb133111eb);
+            value ^ (value >> 31)
+        }
+
+        let server = tokio::time::timeout(
+            Duration::from_secs(10),
+            Endpoint::bind(EndpointOptions {
+                preset: Some(crate::preset_n0()),
+                alpns: Some(vec![TEST_ALPN.to_vec()]),
+                relay_mode: Some(Arc::new(RelayMode::disabled())),
+                port_mapping_enabled: Some(false),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("server bind timed out")
+        .unwrap();
+        let server_addr = server.addr();
+        let client = tokio::time::timeout(
+            Duration::from_secs(10),
+            Endpoint::bind(EndpointOptions {
+                preset: Some(crate::preset_n0()),
+                relay_mode: Some(Arc::new(RelayMode::disabled())),
+                port_mapping_enabled: Some(false),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("client bind timed out")
+        .unwrap();
+
+        let open_connections = Arc::new(AtomicUsize::new(0));
+        let accept_task = {
+            let server = server.clone();
+            let open_connections = open_connections.clone();
+            tokio::spawn(async move {
+                while let Some(incoming) = server.accept_next().await {
+                    let open_connections = open_connections.clone();
+                    tokio::spawn(async move {
+                        let Ok(accepting) = incoming.accept().await else {
+                            return;
+                        };
+                        let Ok(conn) = accepting.connect().await else {
+                            return;
+                        };
+                        open_connections.fetch_add(1, Ordering::SeqCst);
+                        conn.closed().await;
+                        open_connections.fetch_sub(1, Ordering::SeqCst);
+                    });
+                }
+            })
+        };
+
+        let mut rng_state = 0x6a09e667f3bcc909;
+        let mut completed = 0;
+        let mut cancelled = 0;
+        for i in 0..500 {
+            let attempt = client.begin_connect(&server_addr, TEST_ALPN).unwrap();
+            let task_attempt = attempt.clone();
+            let task = tokio::spawn(async move { task_attempt.connect().await });
+
+            if i % 10 == 0 {
+                let result = tokio::time::timeout(Duration::from_secs(10), task)
+                    .await
+                    .expect("forced completion timed out")
+                    .expect("forced completion task panicked");
+                attempt.cancel();
+                match result {
+                    Ok(conn) => {
+                        completed += 1;
+                        drop(conn);
+                    }
+                    Err(_) => cancelled += 1,
+                }
+            } else {
+                let delay_micros = splitmix64(&mut rng_state) % 3000;
+                tokio::time::sleep(Duration::from_micros(delay_micros)).await;
+                attempt.cancel();
+                let result = tokio::time::timeout(Duration::from_secs(10), task)
+                    .await
+                    .expect("raced completion timed out")
+                    .expect("raced completion task panicked");
+                match result {
+                    Ok(conn) => {
+                        completed += 1;
+                        conn.close(0, b"stress done").unwrap();
+                    }
+                    Err(_) => cancelled += 1,
+                }
+            }
+
+            let drained = tokio::time::timeout(Duration::from_secs(5), async {
+                while open_connections.load(Ordering::SeqCst) != 0 {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await;
+            if drained.is_err() {
+                panic!(
+                    "ghost connection stayed open at iteration {i}: {} open",
+                    open_connections.load(Ordering::SeqCst)
+                );
+            }
+        }
+
+        assert!(completed > 0, "no connection attempts completed");
+        assert!(cancelled > 0, "no connection attempts were cancelled");
+        accept_task.abort();
+        tokio::time::timeout(Duration::from_secs(10), client.close())
+            .await
+            .expect("client close timed out")
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(10), server.close())
+            .await
+            .expect("server close timed out")
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn test_side_paths_compile() {
         // Surface-level smoke test: the new accept/path types must compile and
         // be callable. End-to-end connection establishment lives in higher-level
