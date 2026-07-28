@@ -22,13 +22,27 @@ use crate::{
 #[derive(uniffi::Object)]
 pub struct EndpointBuilder {
     inner: std::sync::Mutex<Option<iroh::endpoint::Builder>>,
+    key_pinned: std::sync::atomic::AtomicBool,
 }
 
 impl EndpointBuilder {
     pub(crate) fn from_inner(builder: iroh::endpoint::Builder) -> Self {
         Self {
             inner: std::sync::Mutex::new(Some(builder)),
+            key_pinned: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Record that a preset minted a credential scoped to the key it just set,
+    /// so a later [`Self::secret_key`] would invalidate that credential rather
+    /// than simply changing the endpoint's identity.
+    ///
+    /// Takes the builder mutex so the flag becomes visible atomically with any
+    /// subsequent [`Self::secret_key`] check, closing the check-then-act window.
+    pub(crate) fn pin_secret_key(&self) {
+        let _guard = self.inner.lock().unwrap();
+        self.key_pinned
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn map<F>(&self, f: F)
@@ -38,6 +52,13 @@ impl EndpointBuilder {
         let mut guard = self.inner.lock().unwrap();
         let builder = guard.take().expect("EndpointBuilder consumed");
         *guard = Some(f(builder));
+    }
+
+    /// Replay an upstream `iroh::endpoint::presets::Preset` on the wrapped
+    /// builder. Lets a Rust-side [`Preset`] impl delegate to a real iroh preset
+    /// instead of re-implementing it against [`EndpointBuilder`].
+    pub(crate) fn apply_iroh_preset(&self, preset: impl presets::Preset) {
+        self.map(|b| preset.apply(b));
     }
 
     pub(crate) fn take_inner(&self) -> Result<iroh::endpoint::Builder, IrohError> {
@@ -75,12 +96,24 @@ impl EndpointBuilder {
     }
 
     /// Set the endpoint secret key (32 bytes).
+    ///
+    /// Errors if a preset already pinned the key because it minted a credential
+    /// scoped to it — see `preset_iroh_services`.
     pub fn secret_key(&self, bytes: Vec<u8>) -> Result<(), IrohError> {
         let key: [u8; 32] = AsRef::<[u8]>::as_ref(&bytes)
             .try_into()
             .map_err(|e| IrohError::invalid_input(format!("invalid secret key length: {e:?}")))?;
         let key = iroh::SecretKey::from_bytes(&key);
-        self.map(|b| b.secret_key(key));
+        let mut guard = self.inner.lock().unwrap();
+        if self.key_pinned.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(IrohError::invalid_input(
+                "endpoint secret key is pinned by preset_iroh_services: its relay access token is \
+                 scoped to that key, so replacing it would make the relays reject this endpoint. \
+                 Set the key via ServicesPresetOptions.endpoint_secret_key instead.",
+            ));
+        }
+        let builder = guard.take().expect("EndpointBuilder consumed");
+        *guard = Some(builder.secret_key(key));
         Ok(())
     }
 
