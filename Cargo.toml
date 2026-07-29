@@ -63,10 +63,10 @@ cc = "1"
 uniffi = { version = "0.31.1", features = ["build"] }
 
 [patch.crates-io]
-iroh = { git = "https://github.com/manaflow-ai/iroh.git", rev = "28ef58b4ab82f9ee96fd465f1a5b36ecf8bb3253" }
-iroh-base = { git = "https://github.com/manaflow-ai/iroh.git", rev = "28ef58b4ab82f9ee96fd465f1a5b36ecf8bb3253" }
-iroh-dns = { git = "https://github.com/manaflow-ai/iroh.git", rev = "28ef58b4ab82f9ee96fd465f1a5b36ecf8bb3253" }
-iroh-relay = { git = "https://github.com/manaflow-ai/iroh.git", rev = "28ef58b4ab82f9ee96fd465f1a5b36ecf8bb3253" }
+iroh = { git = "https://github.com/manaflow-ai/iroh.git", rev = "4152d81047a6024881cb24e00dfd49b6cc73c65b" }
+iroh-base = { git = "https://github.com/manaflow-ai/iroh.git", rev = "4152d81047a6024881cb24e00dfd49b6cc73c65b" }
+iroh-dns = { git = "https://github.com/manaflow-ai/iroh.git", rev = "4152d81047a6024881cb24e00dfd49b6cc73c65b" }
+iroh-relay = { git = "https://github.com/manaflow-ai/iroh.git", rev = "4152d81047a6024881cb24e00dfd49b6cc73c65b" }
 noq = { git = "https://github.com/manaflow-ai/noq.git", rev = "2271bbc25890f9577d2ce9bd0bb0f872af32e105" }
 noq-proto = { git = "https://github.com/manaflow-ai/noq.git", rev = "2271bbc25890f9577d2ce9bd0bb0f872af32e105" }
 noq-udp = { git = "https://github.com/manaflow-ai/noq.git", rev = "2271bbc25890f9577d2ce9bd0bb0f872af32e105" }
