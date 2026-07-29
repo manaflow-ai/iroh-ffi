@@ -25,7 +25,7 @@ import Foundation
 // asset checksum there; that commit is tagged and published before it is
 // merged, so the default branch never names a missing or draft-only asset.
 let releaseRepository = "manaflow-ai/iroh-ffi"
-let releaseTag = "v1.0.2-cmux.4"
+let releaseTag = "v1.0.2-cmux.6"
 let releaseChecksum = "ab50f29c61be4f837e76262c76124ca5ee22207dceed671925b65547488f4078"
 
 let packageDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
