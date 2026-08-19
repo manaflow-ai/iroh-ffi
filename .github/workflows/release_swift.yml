@@ -19,7 +19,7 @@ jobs:
     name: Build xcframework + bake SHA + upload draft
     if: "!contains(github.event.head_commit.message, '[skip swift-release]')"
     runs-on: [self-hosted, macOS, ARM64, xcode16]
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
         with:
@@ -27,13 +27,14 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios,aarch64-apple-darwin,aarch64-apple-ios-macabi
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios,aarch64-apple-darwin,x86_64-apple-darwin,aarch64-apple-ios-macabi,x86_64-apple-ios-macabi
       - uses: Swatinem/rust-cache@v2
       - uses: davidB/rust-cargo-make@v1
       - name: Build xcframework + verify + zip
         run: |
           cargo make swift-xcframework
           cargo make verify-swift-xcframework
+          cargo make verify-swift-multi-xcframework-consumer
           cargo make verify-swift-consumer
           bash scripts/release/zip_xcframework.sh
       - name: Bake SHA into Package.swift

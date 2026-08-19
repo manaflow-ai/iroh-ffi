@@ -1,3 +1,4 @@
+#!/bin/sh
 set -eu
 
 # Build the Swift DocC archive and lay it out for static hosting under
@@ -7,9 +8,8 @@ set -eu
 # it up); `cargo make docs-swift` depends on `swift-xcframework` so it is there.
 #
 # `swift test`-style SwiftPM cannot form the `Iroh` module on this setup, so
-# docs are built through xcodebuild (the working toolchain), arch-forced to
-# arm64 to match the arm64-only macOS xcframework slice. `docc
-# transform-for-static-hosting` rewrites asset/base paths for the Pages
+# docs are built through xcodebuild using the hardware's native architecture.
+# `docc transform-for-static-hosting` rewrites asset/base paths for the Pages
 # subpath; only the deep documentation/ entry gets the correct baseUrl, so we
 # replace the SPA-shell root index.html with a redirect into it.
 
@@ -17,14 +17,16 @@ SCHEME="IrohLib"
 BASE_PATH="iroh-ffi/swift"
 DDATA=".xcode-ddata-docs"
 OUT="site/swift"
+HOST_ARCH=$(scripts/apple_hardware_arch.sh)
 
 rm -rf "$DDATA" "$OUT"
 mkdir -p site
 
-arch -arm64 xcodebuild docbuild \
+arch -"$HOST_ARCH" xcodebuild docbuild \
   -scheme "$SCHEME" \
   -destination 'platform=macOS' \
-  -derivedDataPath "$DDATA"
+  -derivedDataPath "$DDATA" \
+  ARCHS="$HOST_ARCH" ONLY_ACTIVE_ARCH=YES
 
 ARCHIVE=$(find "$DDATA/Build/Products" -name '*.doccarchive' | head -1)
 if [ -z "$ARCHIVE" ]; then

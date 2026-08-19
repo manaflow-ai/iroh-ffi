@@ -31,7 +31,7 @@ This repo uses [`cargo-make`](https://crates.io/crates/cargo-make) as its single
 cargo make test-all          # rust + python + js + kotlin + swift
 cargo make test-rust         # just the Rust suite
 cargo make bindgen-kotlin    # generate the Kotlin binding
-cargo make swift-xcframework # full Apple xcframework (iOS + macOS)
+cargo make swift-xcframework # iOS + universal macOS + Catalyst xcframework
 ```
 
 See the per-language READMEs below and [DEVELOPERS.md](DEVELOPERS.md) for details. Release flow is documented in [RELEASING.md](RELEASING.md).

@@ -20,11 +20,11 @@ env:
   IROH_FORCE_STAGING_RELAYS: "1"
 
 jobs:
-  # Only Swift needs macOS + Xcode. It builds *only* the macOS-arm64
-  # framework slice (not the 3 iOS slices DocC never consumes).
+  # Swift docs consume the same artifact shape as releases so documentation
+  # cannot hide a broken platform slice.
   swift:
     name: Swift docs (DocC)
-    timeout-minutes: 45
+    timeout-minutes: 90
     runs-on: [self-hosted, macOS, ARM64, xcode16]
     steps:
       - uses: actions/checkout@v5
@@ -32,7 +32,7 @@ jobs:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios,aarch64-apple-darwin,x86_64-apple-darwin,aarch64-apple-ios-macabi,x86_64-apple-ios-macabi
       - uses: Swatinem/rust-cache@v2
       - uses: davidB/rust-cargo-make@v1
       - run: cargo make docs-swift

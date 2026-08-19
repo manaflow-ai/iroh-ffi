@@ -17,14 +17,14 @@ env:
 
 jobs:
   swift:
-    name: Swift - Full xcframework build + test (iOS + macOS)
-    timeout-minutes: 60
+    name: Swift - Apple Silicon platforms
+    timeout-minutes: 90
     runs-on: [self-hosted, macOS, ARM64, xcode16]
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios,aarch64-apple-darwin,aarch64-apple-ios-macabi
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios,aarch64-apple-darwin,x86_64-apple-darwin,aarch64-apple-ios-macabi,x86_64-apple-ios-macabi
       - uses: Swatinem/rust-cache@v2
       - uses: davidB/rust-cargo-make@v1
       - name: cargo make test-swift
@@ -32,11 +32,35 @@ jobs:
         # macOS via xcodebuild test.
         run: cargo make test-swift
       - name: cargo make verify-swift-xcframework
-        # Asserts per-slice bundle layout (shallow iOS, deep macOS — Xcode 27+
-        # rejects shallow Info.plist on macOS, iroh-ffi#247).
+        # Asserts shallow iOS and versioned macOS/Catalyst layouts, plus the
+        # exact platform, architecture, and deployment metadata contract.
         run: cargo make verify-swift-xcframework
+      - name: cargo make verify-swift-multi-xcframework-consumer
+        run: cargo make verify-swift-multi-xcframework-consumer
       - name: cargo make verify-swift-consumer
         # iOS device build + iOS Simulator full test run (boots a sim, runs
         # IrohLibTests on iOS runtime). Catches link errors + iOS-side runtime
         # regressions that macOS-only test-swift can't see.
+        run: cargo make verify-swift-consumer
+
+  swift-intel:
+    name: Swift - Intel macOS, Simulator, and Catalyst
+    timeout-minutes: 90
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios,aarch64-apple-darwin,x86_64-apple-darwin,aarch64-apple-ios-macabi,x86_64-apple-ios-macabi
+      - uses: Swatinem/rust-cache@v2
+      - uses: davidB/rust-cargo-make@v1
+      - name: Assert Intel runner
+        run: |
+          test "$(uname -m)" = x86_64
+          sw_vers
+      - name: Build universal XCFramework and run native macOS tests
+        run: cargo make test-swift
+      - name: Verify platform slices, architectures, and deployment targets
+        run: cargo make verify-swift-xcframework
+      - name: Build Intel Catalyst and run Intel iOS Simulator tests
         run: cargo make verify-swift-consumer

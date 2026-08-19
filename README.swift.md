@@ -5,8 +5,8 @@
 With [`cargo-make`](https://crates.io/crates/cargo-make) installed:
 
 ```sh
-cargo make test-swift        # build macOS slice + run swift test
-cargo make swift-xcframework # full iOS + macOS xcframework (release)
+cargo make test-swift        # build all slices + run native macOS tests
+cargo make swift-xcframework # iOS + universal macOS + Catalyst artifact
 ```
 
 ## Xcode and iOS
@@ -19,3 +19,10 @@ cargo make swift-xcframework # full iOS + macOS xcframework (release)
 - Add `SystemConfiguration` and `CoreWLAN` as Frameworks (iroh's netwatch needs
   them on Apple platforms).
 - `import IrohLib` in Swift.
+
+The package supports macOS 14.0 or newer on arm64 and x86_64. The artifact
+also includes iOS device arm64, universal iOS Simulator, and universal Mac
+Catalyst slices with a 17.5 minimum.
+
+See [PLATFORM_SUPPORT.md](PLATFORM_SUPPORT.md) for the exact artifact and CI
+contract, plus the compatibility commits retained from the previous fork.
