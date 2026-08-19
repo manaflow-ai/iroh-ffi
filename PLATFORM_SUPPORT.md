@@ -28,6 +28,14 @@ metadata, and static linkage. Consumer checks run macOS, Mac Catalyst, and iOS
 Simulator code natively on Apple Silicon and Intel CI hosts. An isolated
 Simulator is created and deleted for each check.
 
+The isolated `cmux-lite` branch runs
+`.github/workflows/cmux_lite_swift.yml`. Each branch push and pull request
+builds the artifact, runs the layout and consumer checks, and uploads the zip
+with its SHA-256 file for fourteen days. A manual run can additionally create a
+draft prerelease tagged with the source commit; publishing that draft does not
+change the default SwiftPM fallback until `Package.swift` is deliberately
+updated.
+
 ## Compatibility provenance
 
 The old fork's broad first commit is not replayed. Its compatibility behavior

@@ -386,6 +386,14 @@ set -eu
 bash scripts/verify_swift_multi_xcframework_consumer.sh
 '''
 
+[tasks.verify-swift-package-consumer]
+description = "Build a clean package consumer against the checked-out IrohLib product and execute one native API call."
+script_runner = "@shell"
+script = '''
+set -eu
+bash scripts/verify_swift_package_consumer.sh
+'''
+
 [tasks.verify-kotlin-artifact]
 description = "Verify the two Kotlin artifact source trees have every required native lib with the correct architecture, before Maven publish. JVM JAR: 4 desktop JNA paths under kotlin/lib/src/main/resources/. AAR: 4 Android ABIs under kotlin/android/src/main/jniLibs/."
 script_runner = "@shell"

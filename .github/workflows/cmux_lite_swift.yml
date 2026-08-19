@@ -1,0 +1,123 @@
+name: cmux-lite Swift artifact
+
+# The cmux-lite branch has its own artifact gate while the transport rebuild is
+# in progress. It exercises the same XCFramework shape that cmux-lite will
+# consume, without changing the release workflow used by the stable line.
+
+on:
+  push:
+    branches:
+      - cmux-lite
+  pull_request:
+    branches:
+      - cmux-lite
+  workflow_dispatch:
+    inputs:
+      publish_draft:
+        description: Create a draft prerelease containing this branch's Swift artifact
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  IROH_FORCE_STAGING_RELAYS: "1"
+
+jobs:
+  build-and-verify:
+    name: cmux-lite Swift artifact (Apple Silicon)
+    timeout-minutes: 150
+    runs-on: [self-hosted, macOS, ARM64, xcode16]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios,aarch64-apple-darwin,x86_64-apple-darwin,aarch64-apple-ios-macabi,x86_64-apple-ios-macabi
+      - uses: Swatinem/rust-cache@v2
+      - uses: davidB/rust-cargo-make@v1
+      - name: Build the Swift artifact and run IrohLib tests
+        run: cargo make test-swift
+      - name: Verify all Apple slices and deployment metadata
+        run: cargo make verify-swift-xcframework
+      - name: Verify coexistence with another static XCFramework
+        run: cargo make verify-swift-multi-xcframework-consumer
+      - name: Verify a clean package consumer
+        run: cargo make verify-swift-package-consumer
+      - name: Package the verified artifact
+        run: |
+          bash scripts/release/zip_xcframework.sh
+          shasum -a 256 IrohLib.xcframework.zip \
+            | awk '{print $1 "  IrohLib.xcframework.zip"}' \
+            > IrohLib.xcframework.zip.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cmux-lite-swift-${{ github.sha }}
+          path: |
+            IrohLib.xcframework.zip
+            IrohLib.xcframework.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  intel-consumer:
+    name: cmux-lite Swift consumer (Intel)
+    needs: build-and-verify
+    timeout-minutes: 30
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: cmux-lite-swift-${{ github.sha }}
+          path: artifact
+      - name: Assert Intel host and unpack the artifact
+        run: |
+          test "$(uname -m)" = x86_64
+          unzip -q artifact/IrohLib.xcframework.zip
+      - name: Build the clean package consumer on Intel
+        run: bash scripts/verify_swift_package_consumer.sh
+
+  publish-draft:
+    name: Publish draft cmux-lite prerelease artifact
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.publish_draft == true
+    needs: [build-and-verify, intel-consumer]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: cmux-lite-swift-${{ github.sha }}
+          path: release-assets
+      - name: Choose an immutable draft tag
+        id: release
+        shell: bash
+        run: echo "tag=cmux-lite-${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
+      - name: Upload the draft prerelease
+        uses: softprops/action-gh-release@v3
+        with:
+          draft: true
+          prerelease: true
+          tag_name: ${{ steps.release.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ steps.release.outputs.tag }}
+          body: |
+            Draft Swift XCFramework built from the isolated `cmux-lite` branch.
+
+            The package manifest still requires an explicit update before this
+            artifact becomes the default fallback for remote consumers.
+          files: |
+            release-assets/IrohLib.xcframework.zip
+            release-assets/IrohLib.xcframework.zip.sha256
+          fail_on_unmatched_files: true
