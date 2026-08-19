@@ -58,6 +58,7 @@ tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 tokio = { version = "1", features = ["full"] }
 
 [build-dependencies]
+cc = "1"
 uniffi = { version = "0.31.1", features = ["build"] }
 
 [profile.release]

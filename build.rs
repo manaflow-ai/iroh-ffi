@@ -1,7 +1,19 @@
 use std::{env, fs, path::PathBuf};
 
 fn main() {
+    build_apple_compat();
     build_pc();
+}
+
+fn build_apple_compat() {
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
+    if matches!(target_os.as_str(), "ios" | "macos") {
+        cc::Build::new()
+            .file("src/apple_compat.c")
+            .warnings(true)
+            .compile("iroh_ffi_apple_compat");
+        println!("cargo:rerun-if-changed=src/apple_compat.c");
+    }
 }
 
 fn build_pc() {
