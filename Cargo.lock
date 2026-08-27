@@ -1830,6 +1830,7 @@ dependencies = [
  "derive_more",
  "iroh",
  "iroh-base",
+ "iroh-dns",
  "iroh-metrics",
  "iroh-relay",
  "iroh-services",
