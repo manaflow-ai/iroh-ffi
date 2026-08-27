@@ -978,6 +978,345 @@ public func FfiConverterTypeAddrChangeCallback_lower(_ value: AddrChangeCallback
 
 
 /**
+ * A foreign-implementable address lookup service.
+ *
+ * Install one via [`EndpointOptions::address_lookup`] or
+ * [`EndpointBuilder::add_address_lookup`]; iroh then calls it whenever a
+ * connect needs addressing information for an endpoint id, and whenever the
+ * local endpoint's own addressing data changes.
+ *
+ * [`EndpointOptions::address_lookup`]: crate::EndpointOptions::address_lookup
+ * [`EndpointBuilder::add_address_lookup`]: crate::EndpointBuilder::add_address_lookup
+ */
+public protocol AddressLookupService: AnyObject, Sendable {
+    
+    /**
+     * Resolve signed records for `endpoint_id`.
+     *
+     * Returns zero or more pkarr `SignedPacket` byte blobs (as produced by
+     * [`sign_endpoint_record`] or a peer's publish callback). Signature
+     * verification and endpoint-id matching happen in Rust afterwards, so
+     * implementations can return whatever their cache or registry holds.
+     * One-shot: called again on later connects when needed. Bounded by a
+     * Rust-side timeout; a hung call is dropped, not awaited forever.
+     */
+    func resolve(endpointId: EndpointId) async throws  -> [Data]
+    
+    /**
+     * Receive the local endpoint's freshly signed record.
+     *
+     * Called (fire and forget, from a spawned task) whenever the endpoint's
+     * address data changes: relay or direct addresses appeared or changed.
+     * The record is a pkarr `SignedPacket`, already signed with the
+     * endpoint's secret key; upload or store it as an opaque blob.
+     */
+    func publish(record: Data) async throws 
+    
+}
+/**
+ * A foreign-implementable address lookup service.
+ *
+ * Install one via [`EndpointOptions::address_lookup`] or
+ * [`EndpointBuilder::add_address_lookup`]; iroh then calls it whenever a
+ * connect needs addressing information for an endpoint id, and whenever the
+ * local endpoint's own addressing data changes.
+ *
+ * [`EndpointOptions::address_lookup`]: crate::EndpointOptions::address_lookup
+ * [`EndpointBuilder::add_address_lookup`]: crate::EndpointBuilder::add_address_lookup
+ */
+open class AddressLookupServiceImpl: AddressLookupService, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_iroh_ffi_fn_clone_addresslookupservice(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_iroh_ffi_fn_free_addresslookupservice(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * Resolve signed records for `endpoint_id`.
+     *
+     * Returns zero or more pkarr `SignedPacket` byte blobs (as produced by
+     * [`sign_endpoint_record`] or a peer's publish callback). Signature
+     * verification and endpoint-id matching happen in Rust afterwards, so
+     * implementations can return whatever their cache or registry holds.
+     * One-shot: called again on later connects when needed. Bounded by a
+     * Rust-side timeout; a hung call is dropped, not awaited forever.
+     */
+open func resolve(endpointId: EndpointId)async throws  -> [Data]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_iroh_ffi_fn_method_addresslookupservice_resolve(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeEndpointId_lower(endpointId)
+                )
+            },
+            pollFunc: ffi_iroh_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_iroh_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_iroh_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceData.lift,
+            errorHandler: FfiConverterTypeCallbackError_lift
+        )
+}
+    
+    /**
+     * Receive the local endpoint's freshly signed record.
+     *
+     * Called (fire and forget, from a spawned task) whenever the endpoint's
+     * address data changes: relay or direct addresses appeared or changed.
+     * The record is a pkarr `SignedPacket`, already signed with the
+     * endpoint's secret key; upload or store it as an opaque blob.
+     */
+open func publish(record: Data)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_iroh_ffi_fn_method_addresslookupservice_publish(
+                    self.uniffiCloneHandle(),
+                    FfiConverterData.lower(record)
+                )
+            },
+            pollFunc: ffi_iroh_ffi_rust_future_poll_void,
+            completeFunc: ffi_iroh_ffi_rust_future_complete_void,
+            freeFunc: ffi_iroh_ffi_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCallbackError_lift
+        )
+}
+    
+
+    
+}
+
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceAddressLookupService {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // Store the vtable directly.
+    static let vtable: UniffiVTableCallbackInterfaceAddressLookupService = UniffiVTableCallbackInterfaceAddressLookupService(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterTypeAddressLookupService.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface AddressLookupService: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterTypeAddressLookupService.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface AddressLookupService: handle missing in uniffiClone")
+            }
+        },
+        resolve: { (
+            uniffiHandle: UInt64,
+            endpointId: UInt64,
+            uniffiFutureCallback: @escaping UniffiForeignFutureCompleteRustBuffer,
+            uniffiCallbackData: UInt64,
+            uniffiOutDroppedCallback: UnsafeMutablePointer<UniffiForeignFutureDroppedCallbackStruct>
+        ) in
+            let makeCall = {
+                () async throws -> [Data] in
+                guard let uniffiObj = try? FfiConverterTypeAddressLookupService.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return try await uniffiObj.resolve(
+                     endpointId: try FfiConverterTypeEndpointId_lift(endpointId)
+                )
+            }
+
+            let uniffiHandleSuccess = { (returnValue: [Data]) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureResultRustBuffer(
+                        returnValue: FfiConverterSequenceData.lower(returnValue),
+                        callStatus: RustCallStatus()
+                    )
+                )
+            }
+            let uniffiHandleError = { (statusCode, errorBuf) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureResultRustBuffer(
+                        returnValue: RustBuffer.empty(),
+                        callStatus: RustCallStatus(code: statusCode, errorBuf: errorBuf)
+                    )
+                )
+            }
+            uniffiTraitInterfaceCallAsyncWithError(
+                makeCall: makeCall,
+                handleSuccess: uniffiHandleSuccess,
+                handleError: uniffiHandleError,
+                lowerError: FfiConverterTypeCallbackError_lower,
+                droppedCallback: uniffiOutDroppedCallback
+            )
+        },
+        publish: { (
+            uniffiHandle: UInt64,
+            record: RustBuffer,
+            uniffiFutureCallback: @escaping UniffiForeignFutureCompleteVoid,
+            uniffiCallbackData: UInt64,
+            uniffiOutDroppedCallback: UnsafeMutablePointer<UniffiForeignFutureDroppedCallbackStruct>
+        ) in
+            let makeCall = {
+                () async throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeAddressLookupService.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return try await uniffiObj.publish(
+                     record: try FfiConverterData.lift(record)
+                )
+            }
+
+            let uniffiHandleSuccess = { (returnValue: ()) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureResultVoid(
+                        callStatus: RustCallStatus()
+                    )
+                )
+            }
+            let uniffiHandleError = { (statusCode, errorBuf) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureResultVoid(
+                        callStatus: RustCallStatus(code: statusCode, errorBuf: errorBuf)
+                    )
+                )
+            }
+            uniffiTraitInterfaceCallAsyncWithError(
+                makeCall: makeCall,
+                handleSuccess: uniffiHandleSuccess,
+                handleError: uniffiHandleError,
+                lowerError: FfiConverterTypeCallbackError_lower,
+                droppedCallback: uniffiOutDroppedCallback
+            )
+        }
+    )
+
+    // Rust stores this pointer for future callback invocations, so it must live
+    // for the process lifetime (not just for the init function call).
+    static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceAddressLookupService> = {
+        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceAddressLookupService>.allocate(capacity: 1)
+        ptr.initialize(to: vtable)
+        return UnsafePointer(ptr)
+    }()
+}
+
+private func uniffiCallbackInitAddressLookupService() {
+    uniffi_iroh_ffi_fn_init_callback_vtable_addresslookupservice(UniffiCallbackInterfaceAddressLookupService.vtablePtr)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAddressLookupService: FfiConverter {
+    fileprivate static let handleMap = UniffiHandleMap<AddressLookupService>()
+
+    typealias FfiType = UInt64
+    typealias SwiftType = AddressLookupService
+
+    public static func lift(_ handle: UInt64) throws -> AddressLookupService {
+        if ((handle & 1) == 0) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return AddressLookupServiceImpl(unsafeFromHandle: handle)
+        } else {
+            // Swift-generated handle, get the object from the handle map
+            return try handleMap.remove(handle: handle)
+        }
+    }
+
+    public static func lower(_ value: AddressLookupService) -> UInt64 {
+         if let rustImpl = value as? AddressLookupServiceImpl {
+             // Rust-implemented object.  Clone the handle and return it
+            return rustImpl.uniffiCloneHandle()
+         } else {
+            // Swift object, generate a new vtable handle and return that.
+            return handleMap.insert(obj: value)
+         }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AddressLookupService {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: AddressLookupService, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAddressLookupService_lift(_ handle: UInt64) throws -> AddressLookupService {
+    return try FfiConverterTypeAddressLookupService.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAddressLookupService_lower(_ value: AddressLookupService) -> UInt64 {
+    return FfiConverterTypeAddressLookupService.lower(value)
+}
+
+
+
+
+
+
+/**
  * A bidirectional QUIC stream pair.
  */
 public protocol BiStreamProtocol: AnyObject, Sendable {
@@ -2925,6 +3264,16 @@ public func FfiConverterTypeEndpointAddr_lower(_ value: EndpointAddr) -> UInt64 
 public protocol EndpointBuilderProtocol: AnyObject, Sendable {
     
     /**
+     * Install a custom [`AddressLookupService`] on this endpoint.
+     *
+     * The service resolves endpoint ids to signed endpoint records and
+     * receives the local endpoint's own signed record on address changes.
+     * Composes with whatever the preset configured; iroh queries all
+     * installed address lookup services and merges their results.
+     */
+    func addAddressLookup(service: AddressLookupService) 
+    
+    /**
      * Set the advertised ALPNs.
      */
     func alpns(alpns: [Data]) 
@@ -3043,6 +3392,22 @@ public convenience init() {
 
     
 
+    
+    /**
+     * Install a custom [`AddressLookupService`] on this endpoint.
+     *
+     * The service resolves endpoint ids to signed endpoint records and
+     * receives the local endpoint's own signed record on address changes.
+     * Composes with whatever the preset configured; iroh queries all
+     * installed address lookup services and merges their results.
+     */
+open func addAddressLookup(service: AddressLookupService)  {try! rustCall() {
+    uniffi_iroh_ffi_fn_method_endpointbuilder_add_address_lookup(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeAddressLookupService_lower(service),$0
+    )
+}
+}
     
     /**
      * Set the advertised ALPNs.
@@ -7777,6 +8142,13 @@ public struct EndpointOptions {
      */
     public var relayMode: RelayMode?
     /**
+     * Custom address lookup service used to resolve endpoint ids to signed
+     * endpoint records, and to receive this endpoint's own signed record on
+     * address changes. See [`crate::AddressLookupService`]. Defaults to
+     * `None` (only whatever the chosen [`Preset`] configures).
+     */
+    public var addressLookup: AddressLookupService?
+    /**
      * Custom protocols to accept on this endpoint, keyed by ALPN. If provided,
      * an internal router is spawned to dispatch incoming connections to the
      * supplied handlers.
@@ -7831,6 +8203,12 @@ public struct EndpointOptions {
          * chosen [`Preset`] configures.
          */relayMode: RelayMode? = nil, 
         /**
+         * Custom address lookup service used to resolve endpoint ids to signed
+         * endpoint records, and to receive this endpoint's own signed record on
+         * address changes. See [`crate::AddressLookupService`]. Defaults to
+         * `None` (only whatever the chosen [`Preset`] configures).
+         */addressLookup: AddressLookupService? = nil, 
+        /**
          * Custom protocols to accept on this endpoint, keyed by ALPN. If provided,
          * an internal router is spawned to dispatch incoming connections to the
          * supplied handlers.
@@ -7860,6 +8238,7 @@ public struct EndpointOptions {
         self.secretKey = secretKey
         self.alpns = alpns
         self.relayMode = relayMode
+        self.addressLookup = addressLookup
         self.protocols = protocols
         self.portMappingEnabled = portMappingEnabled
         self.deferNatTraversalUntilAuthorized = deferNatTraversalUntilAuthorized
@@ -7888,6 +8267,7 @@ public struct FfiConverterTypeEndpointOptions: FfiConverterRustBuffer {
                 secretKey: FfiConverterOptionData.read(from: &buf), 
                 alpns: FfiConverterOptionSequenceData.read(from: &buf), 
                 relayMode: FfiConverterOptionTypeRelayMode.read(from: &buf), 
+                addressLookup: FfiConverterOptionTypeAddressLookupService.read(from: &buf), 
                 protocols: FfiConverterOptionDictionaryDataTypeProtocolCreator.read(from: &buf), 
                 portMappingEnabled: FfiConverterOptionBool.read(from: &buf), 
                 deferNatTraversalUntilAuthorized: FfiConverterOptionBool.read(from: &buf), 
@@ -7902,6 +8282,7 @@ public struct FfiConverterTypeEndpointOptions: FfiConverterRustBuffer {
         FfiConverterOptionData.write(value.secretKey, into: &buf)
         FfiConverterOptionSequenceData.write(value.alpns, into: &buf)
         FfiConverterOptionTypeRelayMode.write(value.relayMode, into: &buf)
+        FfiConverterOptionTypeAddressLookupService.write(value.addressLookup, into: &buf)
         FfiConverterOptionDictionaryDataTypeProtocolCreator.write(value.protocols, into: &buf)
         FfiConverterOptionBool.write(value.portMappingEnabled, into: &buf)
         FfiConverterOptionBool.write(value.deferNatTraversalUntilAuthorized, into: &buf)
@@ -8195,6 +8576,95 @@ public func FfiConverterTypePathStatsRecord_lift(_ buf: RustBuffer) throws -> Pa
 #endif
 public func FfiConverterTypePathStatsRecord_lower(_ value: PathStatsRecord) -> RustBuffer {
     return FfiConverterTypePathStatsRecord.lower(value)
+}
+
+
+/**
+ * Summary of a parsed and signature-verified endpoint record.
+ */
+public struct RecordSummary {
+    /**
+     * The endpoint id that signed the record.
+     */
+    public var endpointId: EndpointId
+    /**
+     * Relay URLs published in the record, in record order.
+     */
+    public var relayUrls: [String]
+    /**
+     * Direct `ip:port` addresses published in the record, in record order.
+     */
+    public var directAddrs: [String]
+    /**
+     * Microseconds since the unix epoch when the record was signed.
+     */
+    public var lastUpdated: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The endpoint id that signed the record.
+         */endpointId: EndpointId, 
+        /**
+         * Relay URLs published in the record, in record order.
+         */relayUrls: [String], 
+        /**
+         * Direct `ip:port` addresses published in the record, in record order.
+         */directAddrs: [String], 
+        /**
+         * Microseconds since the unix epoch when the record was signed.
+         */lastUpdated: UInt64) {
+        self.endpointId = endpointId
+        self.relayUrls = relayUrls
+        self.directAddrs = directAddrs
+        self.lastUpdated = lastUpdated
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension RecordSummary: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRecordSummary: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RecordSummary {
+        return
+            try RecordSummary(
+                endpointId: FfiConverterTypeEndpointId.read(from: &buf), 
+                relayUrls: FfiConverterSequenceString.read(from: &buf), 
+                directAddrs: FfiConverterSequenceString.read(from: &buf), 
+                lastUpdated: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RecordSummary, into buf: inout [UInt8]) {
+        FfiConverterTypeEndpointId.write(value.endpointId, into: &buf)
+        FfiConverterSequenceString.write(value.relayUrls, into: &buf)
+        FfiConverterSequenceString.write(value.directAddrs, into: &buf)
+        FfiConverterUInt64.write(value.lastUpdated, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRecordSummary_lift(_ buf: RustBuffer) throws -> RecordSummary {
+    return try FfiConverterTypeRecordSummary.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRecordSummary_lower(_ value: RecordSummary) -> RustBuffer {
+    return FfiConverterTypeRecordSummary.lower(value)
 }
 
 
@@ -9045,6 +9515,30 @@ fileprivate struct FfiConverterOptionData: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeAddressLookupService: FfiConverterRustBuffer {
+    typealias SwiftType = AddressLookupService?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAddressLookupService.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAddressLookupService.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeEndpointAddr: FfiConverterRustBuffer {
     typealias SwiftType = EndpointAddr?
 
@@ -9484,6 +9978,37 @@ public func setLogLevel(level: LogLevel)  {try! rustCall() {
 }
 }
 /**
+ * Parses a pkarr signed-packet blob, verifying its signature.
+ *
+ * Fails on malformed blobs and on bad signatures. The returned summary is
+ * for inspection and tests; the resolve path parses records itself.
+ */
+public func parseEndpointRecord(bytes: Data)throws  -> RecordSummary  {
+    return try  FfiConverterTypeRecordSummary_lift(try rustCallWithError(FfiConverterTypeIrohError__as_error_lift) {
+    uniffi_iroh_ffi_fn_func_parse_endpoint_record(
+        FfiConverterData.lower(bytes),$0
+    )
+})
+}
+/**
+ * Signs an endpoint record for `secret_key`'s endpoint id.
+ *
+ * Returns the serialized pkarr `SignedPacket`, suitable for handing to an
+ * [`AddressLookupService::resolve`] response. `ttl_seconds` is baked into
+ * the DNS records (see [`parse_endpoint_record`] for reading it back is not
+ * supported; freshness policy should use `last_updated`).
+ */
+public func signEndpointRecord(secretKey: SecretKey, relayUrls: [String], directAddrs: [String], ttlSeconds: UInt32)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeIrohError__as_error_lift) {
+    uniffi_iroh_ffi_fn_func_sign_endpoint_record(
+        FfiConverterTypeSecretKey_lower(secretKey),
+        FfiConverterSequenceString.lower(relayUrls),
+        FfiConverterSequenceString.lower(directAddrs),
+        FfiConverterUInt32.lower(ttlSeconds),$0
+    )
+})
+}
+/**
  * The minimal preset (no external dependencies; good for tests / offline).
  */
 public func presetMinimal() -> Preset  {
@@ -9529,6 +10054,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_iroh_ffi_checksum_func_set_log_level() != 52619) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_iroh_ffi_checksum_func_parse_endpoint_record() != 15347) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_iroh_ffi_checksum_func_sign_endpoint_record() != 15365) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_iroh_ffi_checksum_func_preset_minimal() != 1543) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -9572,6 +10103,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_iroh_ffi_checksum_method_incoming_retry() != 5830) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_iroh_ffi_checksum_method_addresslookupservice_resolve() != 8892) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_iroh_ffi_checksum_method_addresslookupservice_publish() != 54334) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_iroh_ffi_checksum_method_bistream_recv() != 64172) {
@@ -9725,6 +10262,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_iroh_ffi_checksum_method_endpoint_watch_network_change() != 28710) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_iroh_ffi_checksum_method_endpointbuilder_add_address_lookup() != 18306) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_iroh_ffi_checksum_method_endpointbuilder_alpns() != 55626) {
@@ -9957,6 +10497,7 @@ private let initializationResult: InitializationResult = {
     }
 
     uniffiCallbackInitAddrChangeCallback()
+    uniffiCallbackInitAddressLookupService()
     uniffiCallbackInitHomeRelayCallback()
     uniffiCallbackInitNetworkChangeCallback()
     uniffiCallbackInitPathChangeCallback()
