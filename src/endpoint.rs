@@ -462,6 +462,8 @@ impl Endpoint {
         }
 
         let builder = wrapper.take_inner()?;
+        #[cfg(any(target_os = "ios", target_os = "macos"))]
+        let builder = builder.ca_tls_config(iroh::tls::CaTlsConfig::system());
         let endpoint = builder.bind().await?;
         let runtime = tokio::runtime::Handle::current();
 
