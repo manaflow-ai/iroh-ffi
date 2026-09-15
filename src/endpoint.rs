@@ -462,6 +462,8 @@ impl Endpoint {
         }
 
         let builder = wrapper.take_inner()?;
+        #[cfg(any(target_os = "ios", target_os = "macos"))]
+        let builder = builder.ca_tls_config(iroh::tls::CaTlsConfig::system());
         let endpoint = builder.bind().await?;
         let runtime = tokio::runtime::Handle::current();
 
@@ -1075,6 +1077,15 @@ impl RecvStream {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    fn system_ca_tls_config_builds_runtime_verifier() {
+        let config = iroh::tls::CaTlsConfig::system();
+        let client_config = config
+            .client_config(iroh::tls::default_provider())
+            .expect("Apple system trust verifier should initialize");
+        assert!(client_config.alpn_protocols.is_empty());
+    }
     use std::{
         sync::{
             Mutex as StdMutex,
