@@ -1078,9 +1078,13 @@ impl RecvStream {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn system_ca_tls_config_is_available() {
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    fn system_ca_tls_config_builds_runtime_verifier() {
         let config = iroh::tls::CaTlsConfig::system();
-        assert!(format!("{config:?}").contains("System"));
+        let client_config = config
+            .client_config(iroh::tls::default_provider())
+            .expect("Apple system trust verifier should initialize");
+        assert!(client_config.alpn_protocols.is_empty());
     }
     use std::{
         sync::{
