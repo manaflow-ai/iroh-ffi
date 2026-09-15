@@ -1075,6 +1075,11 @@ impl RecvStream {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn system_ca_tls_config_is_available() {
+        let config = iroh::tls::CaTlsConfig::system();
+        assert!(format!("{config:?}").contains("System"));
+    }
     use std::{
         sync::{
             Mutex as StdMutex,
