@@ -72,6 +72,8 @@ let package = Package(
               // iroh's netdev uses Network.framework for interface enumeration
               // (the nw_* / nw_path_monitor_* symbols) on Apple platforms.
               .linkedFramework("Network"),
+              // macOS relay verification evaluates the system keychain policy.
+              .linkedFramework("Security", .when(platforms: [.macOS])),
               // iroh's netwatch queries WiFi interfaces via CoreWLAN on macOS.
               .linkedFramework("CoreWLAN", .when(platforms: [.macOS]))
             ]),

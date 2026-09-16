@@ -31,6 +31,9 @@ path = "uniffi-bindgen.rs"
 ndk-context = "0.1"
 jni = "0.22"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+iroh = { version = "1.0.0", features = ["platform-verifier"] }
+
 [dependencies]
 anyhow = "1.0.69"
 async-trait = "0.1.80"
@@ -51,6 +54,7 @@ tracing-subscriber = { version = "0.3.17" }
 serde = { version = "1.0.196", features = ["derive"] }
 derive_more = { version = "2.0", features = ["debug"] }
 n0-future = "0.3"
+rustls = { version = "0.23", default-features = false }
 
 
 [dev-dependencies]

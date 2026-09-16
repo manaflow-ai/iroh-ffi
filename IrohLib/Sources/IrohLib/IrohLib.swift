@@ -7,8 +7,8 @@ import Foundation
 // Depending on the consumer's build setup, the low-level FFI code
 // might be in a separate module, or it might be compiled inline into
 // this module. This is a bit of light hackery to work with both.
-#if canImport(Iroh)
-import Iroh
+#if canImport(iroh_ffiFFI)
+import iroh_ffiFFI
 #endif
 
 fileprivate extension RustBuffer {
@@ -2212,6 +2212,11 @@ public protocol EndpointProtocol: AnyObject, Sendable {
      */
     func watchNetworkChange(callback: NetworkChangeCallback)  -> WatchHandle
     
+    /**
+     * Reads the endpoint's authoritative relay state without network probes.
+     */
+    func relayConnectionDiagnostics()  -> [RelayConnectionDiagnostic]
+    
 }
 /**
  * An iroh endpoint.
@@ -2648,6 +2653,17 @@ open func watchNetworkChange(callback: NetworkChangeCallback) -> WatchHandle  {
     uniffi_iroh_ffi_fn_method_endpoint_watch_network_change(
             self.uniffiCloneHandle(),
         FfiConverterTypeNetworkChangeCallback_lower(callback),$0
+    )
+})
+}
+    
+    /**
+     * Reads the endpoint's authoritative relay state without network probes.
+     */
+open func relayConnectionDiagnostics() -> [RelayConnectionDiagnostic]  {
+    return try!  FfiConverterSequenceTypeRelayConnectionDiagnostic.lift(try! rustCall() {
+    uniffi_iroh_ffi_fn_method_endpoint_relay_connection_diagnostics(
+            self.uniffiCloneHandle(),$0
     )
 })
 }
@@ -8264,6 +8280,71 @@ public func FfiConverterTypeRelayConfig_lower(_ value: RelayConfig) -> RustBuffe
 
 
 /**
+ * The current native home-relay state. URL credentials and paths are omitted.
+ */
+public struct RelayConnectionDiagnostic: Equatable, Hashable {
+    public var host: String
+    public var port: UInt16
+    public var connected: Bool
+    public var failure: RelayFailureKind?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(host: String, port: UInt16, connected: Bool, failure: RelayFailureKind?) {
+        self.host = host
+        self.port = port
+        self.connected = connected
+        self.failure = failure
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension RelayConnectionDiagnostic: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRelayConnectionDiagnostic: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RelayConnectionDiagnostic {
+        return
+            try RelayConnectionDiagnostic(
+                host: FfiConverterString.read(from: &buf), 
+                port: FfiConverterUInt16.read(from: &buf), 
+                connected: FfiConverterBool.read(from: &buf), 
+                failure: FfiConverterOptionTypeRelayFailureKind.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RelayConnectionDiagnostic, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.host, into: &buf)
+        FfiConverterUInt16.write(value.port, into: &buf)
+        FfiConverterBool.write(value.connected, into: &buf)
+        FfiConverterOptionTypeRelayFailureKind.write(value.failure, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRelayConnectionDiagnostic_lift(_ buf: RustBuffer) throws -> RelayConnectionDiagnostic {
+    return try FfiConverterTypeRelayConnectionDiagnostic.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRelayConnectionDiagnostic_lower(_ value: RelayConnectionDiagnostic) -> RustBuffer {
+    return FfiConverterTypeRelayConnectionDiagnostic.lower(value)
+}
+
+
+/**
  * Build options for [`ServicesClient`].
  *
  * Supply *exactly one* of `api_secret`, `api_secret_from_env`, or
@@ -8849,6 +8930,125 @@ public func FfiConverterTypePathEvent_lower(_ value: PathEvent) -> RustBuffer {
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
+ * A bounded local connection failure, never a peer-supplied error message.
+ */
+
+public enum RelayFailureKind: Equatable, Hashable {
+    
+    case unknownIssuer
+    case hostnameMismatch
+    case certificateExpired
+    case certificateNotYetValid
+    case certificateRevoked
+    case systemTrustFailed
+    case tlsFailed
+    case networkFailed
+    case other
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RelayFailureKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRelayFailureKind: FfiConverterRustBuffer {
+    typealias SwiftType = RelayFailureKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RelayFailureKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .unknownIssuer
+        
+        case 2: return .hostnameMismatch
+        
+        case 3: return .certificateExpired
+        
+        case 4: return .certificateNotYetValid
+        
+        case 5: return .certificateRevoked
+        
+        case 6: return .systemTrustFailed
+        
+        case 7: return .tlsFailed
+        
+        case 8: return .networkFailed
+        
+        case 9: return .other
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RelayFailureKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .unknownIssuer:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .hostnameMismatch:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .certificateExpired:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .certificateNotYetValid:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .certificateRevoked:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .systemTrustFailed:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .tlsFailed:
+            writeInt(&buf, Int32(7))
+        
+        
+        case .networkFailed:
+            writeInt(&buf, Int32(8))
+        
+        
+        case .other:
+            writeInt(&buf, Int32(9))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRelayFailureKind_lift(_ buf: RustBuffer) throws -> RelayFailureKind {
+    return try FfiConverterTypeRelayFailureKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRelayFailureKind_lower(_ value: RelayFailureKind) -> RustBuffer {
+    return FfiConverterTypeRelayFailureKind.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
  * Which side of a connection we are.
  */
 
@@ -9165,6 +9365,30 @@ fileprivate struct FfiConverterOptionTypeRelayConfig: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeRelayFailureKind: FfiConverterRustBuffer {
+    typealias SwiftType = RelayFailureKind?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeRelayFailureKind.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeRelayFailureKind.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionSequenceData: FfiConverterRustBuffer {
     typealias SwiftType = [Data]?
 
@@ -9280,6 +9504,31 @@ fileprivate struct FfiConverterSequenceTypePathSnapshot: FfiConverterRustBuffer 
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypePathSnapshot.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeRelayConnectionDiagnostic: FfiConverterRustBuffer {
+    typealias SwiftType = [RelayConnectionDiagnostic]
+
+    public static func write(_ value: [RelayConnectionDiagnostic], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeRelayConnectionDiagnostic.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [RelayConnectionDiagnostic] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [RelayConnectionDiagnostic]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeRelayConnectionDiagnostic.read(from: &buf))
         }
         return seq
     }
@@ -9725,6 +9974,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_iroh_ffi_checksum_method_endpoint_watch_network_change() != 28710) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_iroh_ffi_checksum_method_endpoint_relay_connection_diagnostics() != 45430) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_iroh_ffi_checksum_method_endpointbuilder_alpns() != 55626) {

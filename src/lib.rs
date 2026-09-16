@@ -9,6 +9,8 @@ mod key;
 mod net;
 mod path;
 mod relay;
+mod relay_diagnostics;
+mod relay_tls;
 mod services;
 mod ticket;
 mod watch;
@@ -16,8 +18,8 @@ mod watch;
 use tracing_subscriber::filter::LevelFilter;
 
 pub use self::{
-    accept::*, endpoint::*, error::*, key::*, net::*, path::*, relay::*, services::*, ticket::*,
-    watch::*,
+    accept::*, endpoint::*, error::*, key::*, net::*, path::*, relay::*, relay_diagnostics::*,
+    services::*, ticket::*, watch::*,
 };
 
 uniffi::setup_scaffolding!();

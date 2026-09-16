@@ -81,6 +81,7 @@ impl EndpointBuilder {
             .lock()
             .unwrap()
             .take()
+            .map(crate::relay_tls::configure)
             .ok_or_else(|| anyhow::anyhow!("EndpointBuilder already consumed").into())
     }
 }
