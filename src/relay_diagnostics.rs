@@ -3,10 +3,10 @@
 use std::{error::Error, sync::Arc};
 
 use iroh::Watcher;
+use n0_future::task::AbortOnDropHandle;
 use rustls::CertificateError;
 
 use crate::{CallbackError, Endpoint, WatchHandle};
-use n0_future::task::AbortOnDropHandle;
 
 /// A bounded local connection failure, never a peer-supplied error message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
