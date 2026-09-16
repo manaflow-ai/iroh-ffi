@@ -1,11 +1,12 @@
 //! Credential-free snapshots of the native relay's last connection failure.
 
-use std::error::Error;
+use std::{error::Error, sync::Arc};
 
 use iroh::Watcher;
 use rustls::CertificateError;
 
-use crate::Endpoint;
+use crate::{CallbackError, Endpoint, WatchHandle};
+use n0_future::task::AbortOnDropHandle;
 
 /// A bounded local connection failure, never a peer-supplied error message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -22,10 +23,10 @@ pub enum RelayFailureKind {
 }
 
 /// The current native home-relay state. URL credentials and paths are omitted.
-#[derive(Debug, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct RelayConnectionDiagnostic {
     pub host: String,
-    pub port: u16,
+    pub port: Option<u16>,
     pub connected: bool,
     pub failure: Option<RelayFailureKind>,
 }
@@ -34,18 +35,68 @@ pub struct RelayConnectionDiagnostic {
 impl Endpoint {
     /// Reads the endpoint's authoritative relay state without network probes.
     pub fn relay_connection_diagnostics(&self) -> Vec<RelayConnectionDiagnostic> {
-        self.raw()
+        let mut diagnostics: Vec<_> = self
+            .raw()
             .home_relay_status()
             .get()
             .into_iter()
             .map(|status| RelayConnectionDiagnostic {
                 host: status.url().host_str().unwrap_or_default().to_owned(),
-                port: status.url().port_or_known_default().unwrap_or(443),
+                port: status.url().port_or_known_default(),
                 connected: status.is_connected(),
                 failure: status.last_error().map(|error| classify(error)),
             })
-            .collect()
+            .collect();
+        // TLS discovery can fail before any home relay is selected. Those
+        // failures come directly from the SAME verifier used by the endpoint.
+        for failure in self.relay_tls.snapshot() {
+            diagnostics.retain(|value| value.host != failure.host);
+            diagnostics.push(failure);
+        }
+        diagnostics
     }
+
+    /// Watches certificate failures and native connection state without probes.
+    pub fn watch_relay_connection_diagnostics(
+        &self,
+        callback: Arc<dyn RelayConnectionDiagnosticCallback>,
+    ) -> Arc<WatchHandle> {
+        let endpoint = self.clone();
+        let task = self.runtime.spawn(async move {
+            let mut tls = endpoint.relay_tls.subscribe();
+            let mut native = endpoint.raw().home_relay_status();
+            let mut previous = Vec::new();
+            loop {
+                if endpoint.raw().is_closed() {
+                    break;
+                }
+                let snapshot = endpoint.relay_connection_diagnostics();
+                if snapshot != previous {
+                    previous = snapshot.clone();
+                    if callback.on_change(snapshot).await.is_err() {
+                        break;
+                    }
+                }
+                tokio::select! {
+                    biased;
+                    _ = endpoint.raw().closed() => break,
+                    result = tls.changed() => if result.is_err() { break; },
+                    result = native.updated() => if result.is_err() { break; },
+                }
+            }
+        });
+        Arc::new(WatchHandle::new(AbortOnDropHandle::new(task)))
+    }
+}
+
+/// Credential-free relay failure notifications, including pre-selection TLS.
+#[uniffi::export(with_foreign)]
+#[async_trait::async_trait]
+pub trait RelayConnectionDiagnosticCallback: Send + Sync + 'static {
+    async fn on_change(
+        &self,
+        diagnostics: Vec<RelayConnectionDiagnostic>,
+    ) -> Result<(), CallbackError>;
 }
 
 fn classify(error: &(dyn Error + 'static)) -> RelayFailureKind {
@@ -75,7 +126,7 @@ fn classify(error: &(dyn Error + 'static)) -> RelayFailureKind {
     fallback
 }
 
-fn classify_certificate(error: &CertificateError) -> RelayFailureKind {
+pub(crate) fn classify_certificate(error: &CertificateError) -> RelayFailureKind {
     match error {
         CertificateError::UnknownIssuer => RelayFailureKind::UnknownIssuer,
         CertificateError::NotValidForName | CertificateError::NotValidForNameContext { .. } => {

@@ -2217,6 +2217,11 @@ public protocol EndpointProtocol: AnyObject, Sendable {
      */
     func relayConnectionDiagnostics()  -> [RelayConnectionDiagnostic]
     
+    /**
+     * Watches certificate failures and native connection state without probes.
+     */
+    func watchRelayConnectionDiagnostics(callback: RelayConnectionDiagnosticCallback)  -> WatchHandle
+    
 }
 /**
  * An iroh endpoint.
@@ -2664,6 +2669,18 @@ open func relayConnectionDiagnostics() -> [RelayConnectionDiagnostic]  {
     return try!  FfiConverterSequenceTypeRelayConnectionDiagnostic.lift(try! rustCall() {
     uniffi_iroh_ffi_fn_method_endpoint_relay_connection_diagnostics(
             self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+    /**
+     * Watches certificate failures and native connection state without probes.
+     */
+open func watchRelayConnectionDiagnostics(callback: RelayConnectionDiagnosticCallback) -> WatchHandle  {
+    return try!  FfiConverterTypeWatchHandle_lift(try! rustCall() {
+    uniffi_iroh_ffi_fn_method_endpoint_watch_relay_connection_diagnostics(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeRelayConnectionDiagnosticCallback_lower(callback),$0
     )
 })
 }
@@ -5939,6 +5956,231 @@ public func FfiConverterTypeRecvStream_lower(_ value: RecvStream) -> UInt64 {
 
 
 /**
+ * Credential-free relay failure notifications, including pre-selection TLS.
+ */
+public protocol RelayConnectionDiagnosticCallback: AnyObject, Sendable {
+    
+    func onChange(diagnostics: [RelayConnectionDiagnostic]) async throws 
+    
+}
+/**
+ * Credential-free relay failure notifications, including pre-selection TLS.
+ */
+open class RelayConnectionDiagnosticCallbackImpl: RelayConnectionDiagnosticCallback, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_iroh_ffi_fn_clone_relayconnectiondiagnosticcallback(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_iroh_ffi_fn_free_relayconnectiondiagnosticcallback(handle, $0) }
+    }
+
+    
+
+    
+open func onChange(diagnostics: [RelayConnectionDiagnostic])async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_iroh_ffi_fn_method_relayconnectiondiagnosticcallback_on_change(
+                    self.uniffiCloneHandle(),
+                    FfiConverterSequenceTypeRelayConnectionDiagnostic.lower(diagnostics)
+                )
+            },
+            pollFunc: ffi_iroh_ffi_rust_future_poll_void,
+            completeFunc: ffi_iroh_ffi_rust_future_complete_void,
+            freeFunc: ffi_iroh_ffi_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCallbackError_lift
+        )
+}
+    
+
+    
+}
+
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceRelayConnectionDiagnosticCallback {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // Store the vtable directly.
+    static let vtable: UniffiVTableCallbackInterfaceRelayConnectionDiagnosticCallback = UniffiVTableCallbackInterfaceRelayConnectionDiagnosticCallback(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterTypeRelayConnectionDiagnosticCallback.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface RelayConnectionDiagnosticCallback: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterTypeRelayConnectionDiagnosticCallback.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface RelayConnectionDiagnosticCallback: handle missing in uniffiClone")
+            }
+        },
+        onChange: { (
+            uniffiHandle: UInt64,
+            diagnostics: RustBuffer,
+            uniffiFutureCallback: @escaping UniffiForeignFutureCompleteVoid,
+            uniffiCallbackData: UInt64,
+            uniffiOutDroppedCallback: UnsafeMutablePointer<UniffiForeignFutureDroppedCallbackStruct>
+        ) in
+            let makeCall = {
+                () async throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeRelayConnectionDiagnosticCallback.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return try await uniffiObj.onChange(
+                     diagnostics: try FfiConverterSequenceTypeRelayConnectionDiagnostic.lift(diagnostics)
+                )
+            }
+
+            let uniffiHandleSuccess = { (returnValue: ()) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureResultVoid(
+                        callStatus: RustCallStatus()
+                    )
+                )
+            }
+            let uniffiHandleError = { (statusCode, errorBuf) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureResultVoid(
+                        callStatus: RustCallStatus(code: statusCode, errorBuf: errorBuf)
+                    )
+                )
+            }
+            uniffiTraitInterfaceCallAsyncWithError(
+                makeCall: makeCall,
+                handleSuccess: uniffiHandleSuccess,
+                handleError: uniffiHandleError,
+                lowerError: FfiConverterTypeCallbackError_lower,
+                droppedCallback: uniffiOutDroppedCallback
+            )
+        }
+    )
+
+    // Rust stores this pointer for future callback invocations, so it must live
+    // for the process lifetime (not just for the init function call).
+    static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceRelayConnectionDiagnosticCallback> = {
+        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceRelayConnectionDiagnosticCallback>.allocate(capacity: 1)
+        ptr.initialize(to: vtable)
+        return UnsafePointer(ptr)
+    }()
+}
+
+private func uniffiCallbackInitRelayConnectionDiagnosticCallback() {
+    uniffi_iroh_ffi_fn_init_callback_vtable_relayconnectiondiagnosticcallback(UniffiCallbackInterfaceRelayConnectionDiagnosticCallback.vtablePtr)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRelayConnectionDiagnosticCallback: FfiConverter {
+    fileprivate static let handleMap = UniffiHandleMap<RelayConnectionDiagnosticCallback>()
+
+    typealias FfiType = UInt64
+    typealias SwiftType = RelayConnectionDiagnosticCallback
+
+    public static func lift(_ handle: UInt64) throws -> RelayConnectionDiagnosticCallback {
+        if ((handle & 1) == 0) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return RelayConnectionDiagnosticCallbackImpl(unsafeFromHandle: handle)
+        } else {
+            // Swift-generated handle, get the object from the handle map
+            return try handleMap.remove(handle: handle)
+        }
+    }
+
+    public static func lower(_ value: RelayConnectionDiagnosticCallback) -> UInt64 {
+         if let rustImpl = value as? RelayConnectionDiagnosticCallbackImpl {
+             // Rust-implemented object.  Clone the handle and return it
+            return rustImpl.uniffiCloneHandle()
+         } else {
+            // Swift object, generate a new vtable handle and return that.
+            return handleMap.insert(obj: value)
+         }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RelayConnectionDiagnosticCallback {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: RelayConnectionDiagnosticCallback, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRelayConnectionDiagnosticCallback_lift(_ handle: UInt64) throws -> RelayConnectionDiagnosticCallback {
+    return try FfiConverterTypeRelayConnectionDiagnosticCallback.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRelayConnectionDiagnosticCallback_lower(_ value: RelayConnectionDiagnosticCallback) -> UInt64 {
+    return FfiConverterTypeRelayConnectionDiagnosticCallback.lower(value)
+}
+
+
+
+
+
+
+/**
  * A collection of relay servers an endpoint should consider.
  *
  * Mirrors `iroh::RelayMap`. Construct with [`Self::empty`] or [`Self::from_urls`]
@@ -8284,13 +8526,13 @@ public func FfiConverterTypeRelayConfig_lower(_ value: RelayConfig) -> RustBuffe
  */
 public struct RelayConnectionDiagnostic: Equatable, Hashable {
     public var host: String
-    public var port: UInt16
+    public var port: UInt16?
     public var connected: Bool
     public var failure: RelayFailureKind?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(host: String, port: UInt16, connected: Bool, failure: RelayFailureKind?) {
+    public init(host: String, port: UInt16?, connected: Bool, failure: RelayFailureKind?) {
         self.host = host
         self.port = port
         self.connected = connected
@@ -8314,7 +8556,7 @@ public struct FfiConverterTypeRelayConnectionDiagnostic: FfiConverterRustBuffer 
         return
             try RelayConnectionDiagnostic(
                 host: FfiConverterString.read(from: &buf), 
-                port: FfiConverterUInt16.read(from: &buf), 
+                port: FfiConverterOptionUInt16.read(from: &buf), 
                 connected: FfiConverterBool.read(from: &buf), 
                 failure: FfiConverterOptionTypeRelayFailureKind.read(from: &buf)
         )
@@ -8322,7 +8564,7 @@ public struct FfiConverterTypeRelayConnectionDiagnostic: FfiConverterRustBuffer 
 
     public static func write(_ value: RelayConnectionDiagnostic, into buf: inout [UInt8]) {
         FfiConverterString.write(value.host, into: &buf)
-        FfiConverterUInt16.write(value.port, into: &buf)
+        FfiConverterOptionUInt16.write(value.port, into: &buf)
         FfiConverterBool.write(value.connected, into: &buf)
         FfiConverterOptionTypeRelayFailureKind.write(value.failure, into: &buf)
     }
@@ -9979,6 +10221,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_iroh_ffi_checksum_method_endpoint_relay_connection_diagnostics() != 45430) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_iroh_ffi_checksum_method_endpoint_watch_relay_connection_diagnostics() != 37209) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_iroh_ffi_checksum_method_endpointbuilder_alpns() != 55626) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -10123,6 +10368,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_iroh_ffi_checksum_method_relaymode_relay_map() != 38538) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_iroh_ffi_checksum_method_relayconnectiondiagnosticcallback_on_change() != 28525) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_iroh_ffi_checksum_method_servicesclient_name() != 37977) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -10216,6 +10464,7 @@ private let initializationResult: InitializationResult = {
     uniffiCallbackInitPreset()
     uniffiCallbackInitProtocolCreator()
     uniffiCallbackInitProtocolHandler()
+    uniffiCallbackInitRelayConnectionDiagnosticCallback()
     return InitializationResult.ok
 }()
 
