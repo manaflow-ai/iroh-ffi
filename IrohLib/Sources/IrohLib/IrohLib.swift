@@ -2154,6 +2154,19 @@ public protocol EndpointProtocol: AnyObject, Sendable {
     func isClosed()  -> Bool
     
     /**
+     * Tell the endpoint the platform's network may have changed.
+     *
+     * iroh's own interface monitor cannot see every change on mobile
+     * platforms, and iroh recommends calling this from platform connectivity
+     * callbacks (for example iOS `NWPathMonitor`). It triggers an immediate
+     * rescan so paths that died with the old network are abandoned now rather
+     * than after heartbeat and path-idle timeouts. Calling it when nothing
+     * changed is harmless. This is a one-shot input, unlike
+     * `watch_network_change`, which loops.
+     */
+    func networkChange() async 
+    
+    /**
      * Resolves once the endpoint has a usable home relay.
      */
     func online() async 
@@ -2500,6 +2513,35 @@ open func isClosed() -> Bool  {
             self.uniffiCloneHandle(),$0
     )
 })
+}
+    
+    /**
+     * Tell the endpoint the platform's network may have changed.
+     *
+     * iroh's own interface monitor cannot see every change on mobile
+     * platforms, and iroh recommends calling this from platform connectivity
+     * callbacks (for example iOS `NWPathMonitor`). It triggers an immediate
+     * rescan so paths that died with the old network are abandoned now rather
+     * than after heartbeat and path-idle timeouts. Calling it when nothing
+     * changed is harmless. This is a one-shot input, unlike
+     * `watch_network_change`, which loops.
+     */
+open func networkChange()async   {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_iroh_ffi_fn_method_endpoint_network_change(
+                    self.uniffiCloneHandle()
+                    
+                )
+            },
+            pollFunc: ffi_iroh_ffi_rust_future_poll_void,
+            completeFunc: ffi_iroh_ffi_rust_future_complete_void,
+            freeFunc: ffi_iroh_ffi_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: nil
+            
+        )
 }
     
     /**
@@ -10186,6 +10228,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_iroh_ffi_checksum_method_endpoint_is_closed() != 32495) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_iroh_ffi_checksum_method_endpoint_network_change() != 21519) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_iroh_ffi_checksum_method_endpoint_online() != 27176) {
