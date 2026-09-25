@@ -630,6 +630,20 @@ impl Endpoint {
         self.inner.online().await;
     }
 
+    /// Tell the endpoint the platform's network may have changed.
+    ///
+    /// iroh's own interface monitor cannot see every change on mobile
+    /// platforms, and iroh recommends calling this from platform connectivity
+    /// callbacks (for example iOS `NWPathMonitor`). It triggers an immediate
+    /// rescan so paths that died with the old network are abandoned now rather
+    /// than after heartbeat and path-idle timeouts. Calling it when nothing
+    /// changed is harmless. This is a one-shot input, unlike
+    /// `watch_network_change`, which loops.
+    #[uniffi::method(async_runtime = "tokio")]
+    pub async fn network_change(&self) {
+        self.inner.network_change().await;
+    }
+
     /// Insert (or replace) a relay configuration at runtime.
     ///
     /// Replacing the configuration for an active relay restarts only that
