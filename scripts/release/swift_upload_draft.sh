@@ -22,4 +22,12 @@ if ! gh release view "v$V" >/dev/null 2>&1; then
     --title "v$V" \
     --notes "Draft release — promoted to published by release.yml on tag push."
 fi
+# Never replace the asset of a published release: consumers pin its checksum,
+# so clobbering it breaks every fresh download. This happens when a release
+# branch forgets to bump `releaseTag`; fail loudly instead.
+IS_DRAFT=$(gh release view "v$V" --json isDraft --jq .isDraft)
+if [ "$IS_DRAFT" != "true" ]; then
+  echo "ERROR: release v$V is already published; bump releaseTag in Package.swift instead of overwriting it" >&2
+  exit 1
+fi
 gh release upload "v$V" "$ZIP" --clobber
