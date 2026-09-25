@@ -22,4 +22,13 @@ if ! gh release view "v$V" >/dev/null 2>&1; then
     --title "v$V" \
     --notes "Draft release — promoted to published by release.yml on tag push."
 fi
+# Never replace the asset of a published release: its checksum is pinned by
+# every Package.swift that already resolved it. A release branch that forgot to
+# bump releaseTag would otherwise overwrite the previous release (2026-09-25:
+# the ios17.3 branch replaced v1.0.2-cmux.7.ios17.2's zip and broke every
+# consumer pinned to it).
+if [ "$(gh release view "v$V" --json isDraft --jq .isDraft)" != "true" ]; then
+  echo "ERROR: release v$V is already published; bump releaseTag in Package.swift instead of replacing its asset" >&2
+  exit 1
+fi
 gh release upload "v$V" "$ZIP" --clobber
