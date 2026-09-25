@@ -26,7 +26,7 @@ import Foundation
 // merged, so the default branch never names a missing or draft-only asset.
 let releaseRepository = "manaflow-ai/iroh-ffi"
 let releaseTag = "v1.0.2-cmux.7.ios17.2"
-let releaseChecksum = "dcabfa6b5f86653b96f23ea8d0dfb915425c8ddf6d03c67513ece0d05224e97a"
+let releaseChecksum = "01cbe43f40ca0d64ce6f849b9d7e1a937fe73d7418e977a71f30282ad09361e9"
 
 let packageDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
 let localBuiltBinaries = [
