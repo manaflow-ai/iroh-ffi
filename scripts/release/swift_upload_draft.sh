@@ -1,20 +1,42 @@
 #!/usr/bin/env bash
 # Upload IrohLib.xcframework.zip to the draft GitHub release v<version>.
 # Parses <version> from Package.swift's `releaseTag` literal. Creates the
-# draft release if one doesn't exist; replaces the asset if it does.
+# draft release if one doesn't exist; replaces the asset while it is still a
+# draft, and refuses once it is published.
 #
-# Invoked by .github/workflows/release_swift.yml. Locally:
+# Invoked by .github/workflows/release_swift.yml. `--check` only runs the
+# published-release guard, so the workflow can refuse before it builds and
+# bakes a checksum. Locally:
 #
 #   gh auth login   # or `export GH_TOKEN=…`
 #   bash scripts/release/swift_upload_draft.sh
 
 set -eu
 
-ZIP=IrohLib.xcframework.zip
-[ -f "$ZIP" ] || { echo "ERROR: $ZIP not found" >&2; exit 1; }
-
 V=$(grep -oE 'let releaseTag = "v[^"]+"' Package.swift | sed -E 's/.*"v([^"]+)"/\1/')
 [ -n "$V" ] || { echo "ERROR: couldn't parse releaseTag in Package.swift" >&2; exit 1; }
+
+# Never replace the asset of a published release: its checksum is pinned by
+# every Package.swift that already resolved it. A release branch that forgot to
+# bump releaseTag would otherwise overwrite the previous release (2026-09-25:
+# the ios17.3 branch replaced v1.0.2-cmux.7.ios17.2's zip and broke every
+# consumer pinned to it).
+refuse_published() {
+  gh release view "v$V" >/dev/null 2>&1 || return 0
+  is_draft=$(gh release view "v$V" --json isDraft --jq .isDraft)
+  if [ "$is_draft" != "true" ]; then
+    echo "ERROR: release v$V is already published; bump releaseTag in Package.swift instead of replacing its asset" >&2
+    exit 1
+  fi
+}
+
+if [ "${1:-}" = "--check" ]; then
+  refuse_published
+  exit 0
+fi
+
+ZIP=IrohLib.xcframework.zip
+[ -f "$ZIP" ] || { echo "ERROR: $ZIP not found" >&2; exit 1; }
 
 if ! gh release view "v$V" >/dev/null 2>&1; then
   gh release create "v$V" \
@@ -22,13 +44,5 @@ if ! gh release view "v$V" >/dev/null 2>&1; then
     --title "v$V" \
     --notes "Draft release — promoted to published by release.yml on tag push."
 fi
-# Never replace the asset of a published release: its checksum is pinned by
-# every Package.swift that already resolved it. A release branch that forgot to
-# bump releaseTag would otherwise overwrite the previous release (2026-09-25:
-# the ios17.3 branch replaced v1.0.2-cmux.7.ios17.2's zip and broke every
-# consumer pinned to it).
-if [ "$(gh release view "v$V" --json isDraft --jq .isDraft)" != "true" ]; then
-  echo "ERROR: release v$V is already published; bump releaseTag in Package.swift instead of replacing its asset" >&2
-  exit 1
-fi
+refuse_published
 gh release upload "v$V" "$ZIP" --clobber
