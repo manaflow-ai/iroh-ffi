@@ -131,6 +131,20 @@ impl EndpointBuilder {
         self.map(|b| b.relay_mode(mode));
     }
 
+    /// Install a custom [`AddressLookupService`] on this endpoint.
+    ///
+    /// The service resolves endpoint ids to signed endpoint records and
+    /// receives the local endpoint's own signed record on address changes.
+    /// Composes with whatever the preset configured; iroh queries all
+    /// installed address lookup services and merges their results.
+    pub fn add_address_lookup(&self, service: Arc<dyn crate::AddressLookupService>) {
+        self.map(move |b| {
+            b.address_lookup(crate::address_lookup::ForeignAddressLookupBuilder::new(
+                service,
+            ))
+        });
+    }
+
     /// Set the address the endpoint binds to (`host:port`).
     pub fn bind_addr(&self, addr: String) -> Result<(), IrohError> {
         let socket = std::net::SocketAddr::from_str(&addr).map_err(anyhow::Error::from)?;
@@ -231,6 +245,13 @@ pub struct EndpointOptions {
     /// chosen [`Preset`] configures.
     #[uniffi(default = None)]
     pub relay_mode: Option<Arc<RelayMode>>,
+    /// Custom address lookup service used to resolve endpoint ids to signed
+    /// endpoint records, and to receive this endpoint's own signed record on
+    /// address changes. See [`crate::AddressLookupService`]. Defaults to
+    /// `None` (only whatever the chosen [`Preset`] configures).
+    #[debug(skip)]
+    #[uniffi(default = None)]
+    pub address_lookup: Option<Arc<dyn crate::AddressLookupService>>,
     /// Custom protocols to accept on this endpoint, keyed by ALPN. If provided,
     /// an internal router is spawned to dispatch incoming connections to the
     /// supplied handlers.
@@ -445,6 +466,9 @@ impl Endpoint {
         }
         if let Some(addr) = options.bind_addr {
             wrapper.bind_addr(addr)?;
+        }
+        if let Some(service) = options.address_lookup {
+            wrapper.add_address_lookup(service);
         }
         if let Some(enabled) = options.port_mapping_enabled {
             wrapper.set_port_mapping_enabled(enabled);
