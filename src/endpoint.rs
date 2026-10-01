@@ -23,6 +23,7 @@ use crate::{
 #[derive(uniffi::Object)]
 pub struct EndpointBuilder {
     inner: std::sync::Mutex<Option<iroh::endpoint::Builder>>,
+    relay_tls: crate::relay_tls::RelayTlsDiagnostics,
 }
 
 impl EndpointBuilder {
@@ -31,6 +32,7 @@ impl EndpointBuilder {
         crate::apple_compat::ensure_linked();
         Self {
             inner: std::sync::Mutex::new(Some(builder)),
+            relay_tls: crate::relay_tls::RelayTlsDiagnostics::default(),
         }
     }
 
@@ -81,6 +83,7 @@ impl EndpointBuilder {
             .lock()
             .unwrap()
             .take()
+            .map(|builder| self.relay_tls.configure(builder))
             .ok_or_else(|| anyhow::anyhow!("EndpointBuilder already consumed").into())
     }
 }
@@ -150,7 +153,9 @@ impl EndpointBuilder {
     pub async fn bind(&self) -> Result<Arc<Endpoint>, IrohError> {
         let builder = self.take_inner()?;
         let endpoint = builder.bind().await.map_err(anyhow::Error::from)?;
-        Ok(Arc::new(Endpoint::new(endpoint)))
+        let mut endpoint = Endpoint::new(endpoint);
+        endpoint.relay_tls = self.relay_tls.clone();
+        Ok(Arc::new(endpoint))
     }
 }
 
@@ -331,7 +336,8 @@ pub struct Endpoint {
     /// Runtime entered by the async FFI constructor. Synchronous watcher
     /// registration may run on an arbitrary foreign thread, so it must spawn
     /// through this handle rather than ambient Tokio thread-local state.
-    runtime: tokio::runtime::Handle,
+    pub(crate) runtime: tokio::runtime::Handle,
+    pub(crate) relay_tls: crate::relay_tls::RelayTlsDiagnostics,
 }
 
 const CONNECT_CANCELLED_MESSAGE: &str = "outgoing connection cancelled";
@@ -414,6 +420,7 @@ impl Endpoint {
             inner: ep,
             router: None,
             runtime: tokio::runtime::Handle::current(),
+            relay_tls: crate::relay_tls::RelayTlsDiagnostics::default(),
         }
     }
 
@@ -472,6 +479,7 @@ impl Endpoint {
                     inner: endpoint.clone(),
                     router: None,
                     runtime: runtime.clone(),
+                    relay_tls: wrapper.relay_tls.clone(),
                 });
                 for (alpn, creator) in protocols {
                     let handler = creator.create(endpoint_wrapper.clone());
@@ -486,6 +494,7 @@ impl Endpoint {
             inner: endpoint,
             router,
             runtime,
+            relay_tls: wrapper.relay_tls.clone(),
         })
     }
 

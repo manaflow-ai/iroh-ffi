@@ -25,8 +25,8 @@ import Foundation
 // asset checksum there; that commit is tagged and published before it is
 // merged, so the default branch never names a missing or draft-only asset.
 let releaseRepository = "manaflow-ai/iroh-ffi"
-let releaseTag = "v1.0.2-cmux.7"
-let releaseChecksum = "5902af2a8f45612959aedd2a1623f5f7e8e1f27326f9676221c3d9896a4a0ca7"
+let releaseTag = "v1.0.2-cmux.7.ios17.2"
+let releaseChecksum = "dcabfa6b5f86653b96f23ea8d0dfb915425c8ddf6d03c67513ece0d05224e97a"
 
 let packageDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
 let localBuiltBinaries = [
@@ -51,7 +51,7 @@ let irohBinary: Target = useLocalXcframework
 let package = Package(
     name: "IrohLib",
     platforms: [
-        .iOS("17.5"),
+        .iOS("17.0"),
         .macOS("14.0")
     ],
     products: [
@@ -72,6 +72,8 @@ let package = Package(
               // iroh's netdev uses Network.framework for interface enumeration
               // (the nw_* / nw_path_monitor_* symbols) on Apple platforms.
               .linkedFramework("Network"),
+              // macOS relay verification evaluates the system keychain policy.
+              .linkedFramework("Security", .when(platforms: [.macOS])),
               // iroh's netwatch queries WiFi interfaces via CoreWLAN on macOS.
               .linkedFramework("CoreWLAN", .when(platforms: [.macOS]))
             ]),

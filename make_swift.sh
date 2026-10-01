@@ -39,7 +39,7 @@ export CFLAGS="${CFLAGS:-} \
 # `nw_path_is_ultra_constrained` API. `src/apple_compat.c` back-deploys that
 # call; these explicit floors keep every Mach-O slice aligned with the oldest
 # OS versions this package supports.
-export IPHONEOS_DEPLOYMENT_TARGET="17.5"
+export IPHONEOS_DEPLOYMENT_TARGET="17.0"
 export MACOSX_DEPLOYMENT_TARGET="14.0"
 
 UDL_NAME="iroh_ffi"
