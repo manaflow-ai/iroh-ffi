@@ -21,4 +21,4 @@ cargo make swift-xcframework # iOS + universal macOS xcframework (release)
 - `import IrohLib` in Swift.
 
 The package supports macOS 14.0 or newer on both arm64 and x86_64. iOS keeps
-its existing 17.5 minimum and device/simulator architectures.
+its existing 17.0 minimum and device/simulator architectures.

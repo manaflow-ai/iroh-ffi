@@ -290,7 +290,7 @@ for slice_dir in "$XCF"/*/; do
       plist="$framework/Info.plist"
       [ -f "$plist" ] || err "$slice: missing shallow Info.plist"
       minimum=$(plutil -extract MinimumOSVersion raw -o - "$plist" 2>/dev/null || true)
-      [ "$minimum" = "17.5" ] || err "$slice: MinimumOSVersion '$minimum', expected '17.5'"
+      [ "$minimum" = "17.0" ] || err "$slice: MinimumOSVersion '$minimum', expected '17.0'"
       [ ! -d "$framework/Versions" ] || err "$slice: iOS framework unexpectedly uses a versioned layout"
       ;;
   esac
@@ -358,9 +358,9 @@ assert_build_versions() {
 }
 
 # LC_BUILD_VERSION platform constants: 1 = macOS, 2 = iOS, 7 = iOS Simulator.
-assert_build_versions "$IOS_DEVICE" "arm64" "2" "17.5" "iOS device arm64"
-assert_build_versions "$IOS_SIM" "arm64" "7" "17.5" "iOS Simulator arm64"
-assert_build_versions "$IOS_SIM" "x86_64" "7" "17.5" "iOS Simulator x86_64"
+assert_build_versions "$IOS_DEVICE" "arm64" "2" "17.0" "iOS device arm64"
+assert_build_versions "$IOS_SIM" "arm64" "7" "17.0" "iOS Simulator arm64"
+assert_build_versions "$IOS_SIM" "x86_64" "7" "17.0" "iOS Simulator x86_64"
 assert_build_versions "$MACOS" "arm64" "1" "14.0" "macOS arm64"
 assert_build_versions "$MACOS" "x86_64" "1" "14.0" "macOS x86_64"
 

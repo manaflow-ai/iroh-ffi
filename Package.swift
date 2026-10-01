@@ -25,8 +25,8 @@ import Foundation
 // asset checksum there; that commit is tagged and published before it is
 // merged, so the default branch never names a missing or draft-only asset.
 let releaseRepository = "manaflow-ai/iroh-ffi"
-let releaseTag = "v1.0.2-cmux.7"
-let releaseChecksum = "5902af2a8f45612959aedd2a1623f5f7e8e1f27326f9676221c3d9896a4a0ca7"
+let releaseTag = "v1.0.2-cmux.7.ios17.1"
+let releaseChecksum = "18ef98ad160e206ead65c11a280f812d5eb3464361b1b13d7a9c5bdcee1f3e3f"
 
 let packageDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
 let localBuiltBinaries = [
@@ -51,7 +51,7 @@ let irohBinary: Target = useLocalXcframework
 let package = Package(
     name: "IrohLib",
     platforms: [
-        .iOS("17.5"),
+        .iOS("17.0"),
         .macOS("14.0")
     ],
     products: [
