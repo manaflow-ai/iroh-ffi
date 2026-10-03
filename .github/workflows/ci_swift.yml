@@ -35,6 +35,7 @@ jobs:
       - name: Assert ARM Sonoma runner
         run: |
           test "$(uname -m)" = arm64
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 15
           sw_vers
       - name: cargo make test-swift
         # Builds the full Apple xcframework + runs the IrohLib test suite for
@@ -56,6 +57,8 @@ jobs:
     runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Guard deprecated macOS runners
+        run: bash scripts/check-runner-labels.sh
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with:
           toolchain: 1.91.0
@@ -67,6 +70,7 @@ jobs:
       - name: Assert Intel macOS 15 runner
         run: |
           test "$(uname -m)" = x86_64
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 15
           sw_vers
       - name: Build universal xcframework + run macOS behavior tests
         run: cargo make test-swift
