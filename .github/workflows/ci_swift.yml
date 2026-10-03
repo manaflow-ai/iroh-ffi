@@ -22,10 +22,10 @@ jobs:
     runs-on: macos-15
     steps:
       - name: Guard deprecated macOS runners
-        run: ! grep -R -nE "macos-14(-large|-xlarge)?" .github/workflows .github/actions 2>/dev/null
+        run: bash scripts/check-runner-labels.sh
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - name: Guard deprecated macOS runners
-        run: ! grep -R -nE "macos-14(-large|-xlarge)?" .github/workflows .github/actions 2>/dev/null
+        run: bash scripts/check-runner-labels.sh
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with:
           toolchain: 1.91.0
