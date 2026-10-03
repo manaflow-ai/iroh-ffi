@@ -25,9 +25,11 @@ jobs:
   build-and-bake:
     name: Build xcframework + bake SHA + upload draft
     if: "!contains(github.event.head_commit.message, '[skip swift-release]')"
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 90
     steps:
+      - name: Guard deprecated macOS runners
+        run: ! grep -R -nE "macos-14(-large|-xlarge)?" .github/workflows .github/actions 2>/dev/null
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
