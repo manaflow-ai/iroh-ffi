@@ -29,8 +29,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-      - - name: Guard deprecated macOS runners
-      -   run: bash scripts/check-runner-labels.sh
+      - name: Guard deprecated macOS runners
+        run: bash scripts/check-runner-labels.sh
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}

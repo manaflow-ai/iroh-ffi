@@ -39,8 +39,8 @@ jobs:
             runner: windows-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - - name: Guard deprecated macOS runners
-      -   run: bash scripts/check-runner-labels.sh
+      - name: Guard deprecated macOS runners
+        run: bash scripts/check-runner-labels.sh
         with:
           persist-credentials: false
           submodules: recursive
