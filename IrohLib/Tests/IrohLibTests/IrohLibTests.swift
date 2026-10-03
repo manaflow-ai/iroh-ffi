@@ -216,6 +216,11 @@ final class AppleBackDeploymentTests: XCTestCase {
                 "Network.framework's strong definition must replace the weak fallback"
             )
             XCTAssertTrue(definingImage.contains("Network.framework"), definingImage)
+        } else if #available(macOS 15.0, iOS 18.0, *) {
+            // macOS 15 exposes the symbol in Network.framework while the
+            // deployment target still uses the compatibility shim on older OSes.
+            XCTAssertNotNil(systemImplementation, "macOS 15+ must expose the Network.framework symbol")
+            XCTAssertTrue(definingImage.contains("Network.framework"), definingImage)
         } else {
             XCTAssertNil(
                 systemImplementation,
