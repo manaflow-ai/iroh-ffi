@@ -34,7 +34,7 @@ jobs:
           - name: ubuntu-latest
             runner: ubuntu-latest
           - name: macOS-arm-latest
-            runner: macos-14
+            runner: macos-15
           - name: windows-latest
             runner: windows-latest
     steps:
@@ -42,6 +42,8 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+      - name: Guard deprecated macOS runners
+        run: bash scripts/check-runner-labels.sh
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable 2026-07-09
         with:
           toolchain: stable
